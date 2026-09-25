@@ -1,0 +1,5 @@
+SELECT coalesce(nullif(author_gender, ''), 'UNKNOWN') AS genero,
+       count(*)::int AS menciones
+FROM sl_comments
+GROUP BY coalesce(nullif(author_gender, ''), 'UNKNOWN')
+ORDER BY menciones DESC;

@@ -1,0 +1,11 @@
+{
+  "gitSyncId": "6a9b555e277a9d17c2bbaffc_76cc2d8c-f4b4-4613-aaad-1e475fec1c8f",
+  "id": "Reportes_JS_Reports",
+  "unpublishedCollection": {
+    "name": "JS_Reports",
+    "pageId": "Reportes",
+    "pluginId": "js-plugin",
+    "pluginType": "JS",
+    "variables": []
+  }
+}

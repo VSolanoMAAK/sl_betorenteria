@@ -1,0 +1,4 @@
+CREATE TRIGGER sl_comments_alert_after_insert
+AFTER INSERT ON public.sl_comments
+FOR EACH ROW
+EXECUTE FUNCTION public.sl_create_comment_alert();

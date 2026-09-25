@@ -1,0 +1,11 @@
+SELECT t.platform,
+       c.author_name,
+       c.author_gender,
+       c.content_text,
+       c.published_at,
+       p.content_text AS post_texto
+FROM sl_comments c
+JOIN sl_social_posts p ON p.id = c.post_id
+JOIN sl_monitored_targets t ON t.id = p.target_id
+ORDER BY c.published_at DESC
+LIMIT 50;

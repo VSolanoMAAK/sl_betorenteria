@@ -1,0 +1,3 @@
+UPDATE sl_platforms
+SET is_active = NOT is_active
+WHERE code = {{this.params.code}};

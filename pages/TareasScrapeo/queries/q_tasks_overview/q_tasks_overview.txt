@@ -1,0 +1,30 @@
+SELECT
+    t.id AS target_id,
+    t.tenant_id,
+    t.platform,
+    t.handle,
+    t.status AS target_status,
+
+    s.id AS task_id,
+    s.scrape_type,
+    s.api_endpoint,
+    s.status AS task_status,
+    s.last_execution,
+    s.next_execution
+
+FROM public.sl_monitored_targets t
+
+INNER JOIN public.sl_tenants tn
+    ON tn.id = t.tenant_id
+
+LEFT JOIN public.sl_scrape_tasks s
+    ON s.target_id = t.id
+    AND s.tenant_id = t.tenant_id
+
+WHERE tn.name = 'Demo Tenant'
+
+ORDER BY
+    t.platform,
+    t.handle,
+    s.next_execution NULLS LAST,
+    s.id;

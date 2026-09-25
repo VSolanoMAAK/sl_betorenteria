@@ -1,0 +1,18 @@
+WITH latest AS (
+  SELECT DISTINCT ON (post_id) post_id, likes_count, comments_count
+  FROM sl_post_metrics
+  ORDER BY post_id, fetched_at DESC
+),
+days AS (
+  SELECT date_trunc('day', p.published_at) AS d, l.likes_count, l.comments_count
+  FROM sl_social_posts p
+  LEFT JOIN latest l ON l.post_id = p.id
+  WHERE p.published_at IS NOT NULL
+)
+SELECT to_char(d, 'DD/MM') AS dia,
+       count(*)::int AS posts,
+       coalesce(sum(likes_count),0)::bigint AS reacciones,
+       coalesce(sum(comments_count),0)::bigint AS comentarios
+FROM days
+GROUP BY d
+ORDER BY d;

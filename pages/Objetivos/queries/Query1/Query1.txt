@@ -1,0 +1,4 @@
+SELECT t.platform, count(*) AS posts
+FROM sl_social_posts p
+JOIN sl_monitored_targets t ON t.id = p.target_id
+GROUP BY t.platform;

@@ -1,0 +1,11 @@
+WITH latest AS (
+  SELECT DISTINCT ON (post_id) post_id, likes_count, comments_count
+  FROM sl_post_metrics
+  ORDER BY post_id, fetched_at DESC
+)
+SELECT
+  (SELECT count(*) FROM sl_social_posts)::int AS total_posts,
+  (SELECT coalesce(sum(likes_count),0) FROM latest)::bigint AS total_reactions,
+  (SELECT coalesce(sum(comments_count),0) FROM latest)::bigint AS total_comments,
+  (SELECT count(*) FROM sl_monitored_targets WHERE status = 'active')::int AS total_targets,
+  (SELECT max(scraped_at) FROM sl_social_posts) AS last_scrape;

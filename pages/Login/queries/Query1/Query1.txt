@@ -1,0 +1,1 @@
+SELECT * FROM public."sl_comments" LIMIT 10;

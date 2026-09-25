@@ -1,0 +1,9 @@
+SELECT
+    (SELECT COUNT(*) FROM public.sl_comments)
+        AS comentarios_actuales,
+
+    (SELECT COUNT(*) FROM public.sl_alerts)
+        AS alertas_actuales,
+
+    (SELECT MAX(scraped_at) FROM public.sl_comments)
+        AS ultimo_scrape;

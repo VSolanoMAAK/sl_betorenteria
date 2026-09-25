@@ -1,0 +1,60 @@
+CREATE TABLE public.sl_web_keywords (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    tenant_id UUID NOT NULL
+        REFERENCES public.sl_tenants(id) ON DELETE CASCADE,
+
+    phrase TEXT NOT NULL,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT sl_web_keywords_phrase_check
+        CHECK (btrim(phrase) <> ''),
+
+    CONSTRAINT sl_web_keywords_tenant_phrase_unique
+        UNIQUE (tenant_id, phrase),
+
+    CONSTRAINT sl_web_keywords_id_tenant_unique
+        UNIQUE (id, tenant_id)
+);
+
+CREATE TABLE public.sl_web_mentions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    tenant_id UUID NOT NULL
+        REFERENCES public.sl_tenants(id) ON DELETE CASCADE,
+
+    keyword_id UUID NOT NULL,
+
+    title TEXT,
+    snippet TEXT,
+
+    source_name TEXT,
+    source_domain TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+
+    published_at TIMESTAMPTZ,
+    detected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT sl_web_mentions_keyword_tenant_fk
+        FOREIGN KEY (keyword_id, tenant_id)
+        REFERENCES public.sl_web_keywords(id, tenant_id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT sl_web_mentions_source_check
+        CHECK (
+            btrim(source_domain) <> ''
+            AND btrim(source_url) <> ''
+        ),
+
+    CONSTRAINT sl_web_mentions_unique_result
+        UNIQUE (keyword_id, source_url)
+);
+
+CREATE INDEX sl_web_mentions_date_idx
+    ON public.sl_web_mentions
+    (tenant_id, published_at DESC);
+
+CREATE INDEX sl_web_mentions_source_idx
+    ON public.sl_web_mentions
+    (tenant_id, source_domain);

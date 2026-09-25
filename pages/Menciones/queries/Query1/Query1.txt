@@ -1,0 +1,20 @@
+SELECT
+    table_name AS tabla,
+    ordinal_position AS posicion,
+    column_name AS columna,
+    data_type AS tipo,
+    udt_name AS tipo_interno,
+    is_nullable AS permite_nulos,
+    column_default AS valor_predeterminado
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name IN (
+      'sl_social_posts',
+      'sl_post_metrics',
+      'sl_comments',
+      'sl_monitored_targets',
+      'sl_scrape_tasks'
+  )
+ORDER BY
+    table_name,
+    ordinal_position;

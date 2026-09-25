@@ -1,0 +1,2 @@
+DELETE FROM sl_monitored_targets
+WHERE id = {{this.params.id}};

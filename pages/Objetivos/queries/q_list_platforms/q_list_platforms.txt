@@ -1,0 +1,4 @@
+SELECT code, display_name, category
+FROM sl_platforms
+WHERE is_active = TRUE
+ORDER BY category, display_name;

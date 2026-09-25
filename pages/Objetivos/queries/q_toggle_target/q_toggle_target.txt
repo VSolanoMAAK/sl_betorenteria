@@ -1,0 +1,3 @@
+UPDATE sl_monitored_targets
+SET status = CASE WHEN status = 'active' THEN 'inactive' ELSE 'active' END
+WHERE id = {{this.params.id}};

@@ -1,0 +1,7 @@
+UPDATE public.sl_alerts
+SET read_at = CURRENT_TIMESTAMP
+WHERE id = {{this.params.alert_id}}::uuid
+  AND read_at IS NULL
+RETURNING
+    id AS alert_id,
+    read_at;

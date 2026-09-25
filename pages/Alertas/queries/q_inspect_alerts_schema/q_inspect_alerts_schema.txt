@@ -1,0 +1,28 @@
+SELECT
+    'RESTRICCIÓN' AS tipo,
+    c.conrelid::regclass::text AS tabla,
+    c.conname AS nombre,
+    pg_get_constraintdef(c.oid) AS definicion
+FROM pg_catalog.pg_constraint c
+WHERE c.conrelid IN (
+    'public.sl_comments'::regclass,
+    'public.sl_social_posts'::regclass,
+    'public.sl_monitored_targets'::regclass
+)
+
+UNION ALL
+
+SELECT
+    'ÍNDICE' AS tipo,
+    schemaname || '.' || tablename AS tabla,
+    indexname AS nombre,
+    indexdef AS definicion
+FROM pg_catalog.pg_indexes
+WHERE schemaname = 'public'
+  AND tablename IN (
+      'sl_comments',
+      'sl_social_posts',
+      'sl_monitored_targets'
+  )
+
+ORDER BY tabla, tipo, nombre;

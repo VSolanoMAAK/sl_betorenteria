@@ -1,0 +1,13 @@
+SELECT
+    r.rolname,
+    t.tablename,
+    has_table_privilege(r.rolname, 'public.' || t.tablename, 'SELECT') AS can_select,
+    has_table_privilege(r.rolname, 'public.' || t.tablename, 'INSERT') AS can_insert,
+    has_table_privilege(r.rolname, 'public.' || t.tablename, 'UPDATE') AS can_update,
+    has_table_privilege(r.rolname, 'public.' || t.tablename, 'DELETE') AS can_delete
+FROM pg_roles r
+CROSS JOIN pg_tables t
+WHERE r.rolname IN ('sl_appsmith', 'sl_n8n', 'sl_migrator', 'sl_owner')
+  AND t.schemaname = 'public'
+  AND t.tablename LIKE 'sl_%'
+ORDER BY r.rolname, t.tablename;

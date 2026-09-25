@@ -1,0 +1,5 @@
+SELECT published_at, likes_count, comments_count
+FROM sl_post_metrics m
+JOIN sl_social_posts p ON p.id = m.post_id
+ORDER BY m.fetched_at DESC, p.published_at DESC
+LIMIT 5;

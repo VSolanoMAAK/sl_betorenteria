@@ -1,0 +1,5 @@
+INSERT INTO sl_monitored_targets (tenant_id, platform, external_profile_id, handle, status)
+SELECT tn.id, {{this.params.platform}}, {{this.params.external_id}}, {{this.params.handle}}, 'active'
+FROM sl_tenants tn
+WHERE tn.name = 'Demo Tenant'
+RETURNING id;

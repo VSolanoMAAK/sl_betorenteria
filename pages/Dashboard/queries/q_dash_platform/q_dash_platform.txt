@@ -1,0 +1,15 @@
+WITH latest AS (
+  SELECT DISTINCT ON (post_id) post_id, likes_count, comments_count
+  FROM sl_post_metrics
+  ORDER BY post_id, fetched_at DESC
+)
+SELECT t.platform,
+       count(*)::int AS posts,
+       coalesce(sum(l.likes_count),0)::bigint AS reacciones,
+       coalesce(sum(l.comments_count),0)::bigint AS comentarios,
+       max(p.published_at) AS ultimo_post
+FROM sl_social_posts p
+JOIN sl_monitored_targets t ON t.id = p.target_id
+LEFT JOIN latest l ON l.post_id = p.id
+GROUP BY t.platform
+ORDER BY reacciones DESC;

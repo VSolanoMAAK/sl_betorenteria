@@ -1,0 +1,186 @@
+{
+  "backgroundColor": "#FFFFFF",
+  "borderColor": "#E0DEDE",
+  "borderRadius": "{{appsmith.theme.borderRadius.appBorderRadius}}",
+  "borderWidth": "1",
+  "bottomRow": 75,
+  "boxShadow": "{{appsmith.theme.boxShadow.appBoxShadow}}",
+  "defaultModel": "{ \"active\": \"settings\", \"userEmail\": \"{{appsmith.store.userEmail || ''}}\", \"userRole\": \"{{appsmith.store.userRole || ''}}\" }",
+  "dynamicBindingPathList": [
+    {
+      "key": "theme"
+    },
+    {
+      "key": "borderRadius"
+    },
+    {
+      "key": "boxShadow"
+    },
+    {
+      "key": "defaultModel"
+    }
+  ],
+  "dynamicHeight": "FIXED",
+  "dynamicPropertyPathList": [
+    {
+      "key": "go_dashboard"
+    },
+    {
+      "key": "go_mentions"
+    },
+    {
+      "key": "go_analytics"
+    },
+    {
+      "key": "go_competitors"
+    },
+    {
+      "key": "go_targets"
+    },
+    {
+      "key": "go_alerts"
+    },
+    {
+      "key": "go_reports"
+    },
+    {
+      "key": "go_tasks"
+    },
+    {
+      "key": "go_integrations"
+    },
+    {
+      "key": "go_users"
+    },
+    {
+      "key": "go_roles"
+    },
+    {
+      "key": "go_audit"
+    },
+    {
+      "key": "go_settings"
+    },
+    {
+      "key": "go_billing"
+    }
+  ],
+  "dynamicTriggerPathList": [
+    {
+      "key": "onResetClick"
+    },
+    {
+      "key": "onLogout"
+    },
+    {
+      "key": "go_dashboard"
+    },
+    {
+      "key": "go_mentions"
+    },
+    {
+      "key": "go_analytics"
+    },
+    {
+      "key": "go_competitors"
+    },
+    {
+      "key": "go_targets"
+    },
+    {
+      "key": "go_alerts"
+    },
+    {
+      "key": "go_reports"
+    },
+    {
+      "key": "go_tasks"
+    },
+    {
+      "key": "go_integrations"
+    },
+    {
+      "key": "go_users"
+    },
+    {
+      "key": "go_roles"
+    },
+    {
+      "key": "go_audit"
+    },
+    {
+      "key": "go_settings"
+    },
+    {
+      "key": "go_billing"
+    }
+  ],
+  "events": [
+    "onResetClick",
+    "onLogout",
+    "go_dashboard",
+    "go_mentions",
+    "go_analytics",
+    "go_competitors",
+    "go_targets",
+    "go_alerts",
+    "go_reports",
+    "go_tasks",
+    "go_integrations",
+    "go_users",
+    "go_roles",
+    "go_audit",
+    "go_settings",
+    "go_billing"
+  ],
+  "go_alerts": "{{navigateTo('Alertas', {}, 'SAME_WINDOW');}}",
+  "go_analytics": "{{navigateTo('Analitica', {}, 'SAME_WINDOW');}}",
+  "go_audit": "{{navigateTo('Auditoria', {}, 'SAME_WINDOW');}}",
+  "go_billing": "{{navigateTo('Plan', {}, 'SAME_WINDOW');}}",
+  "go_competitors": "{{navigateTo('Competencia', {}, 'SAME_WINDOW');}}",
+  "go_dashboard": "{{navigateTo('Dashboard', {}, 'SAME_WINDOW');}}",
+  "go_integrations": "{{navigateTo('Integraciones', {}, 'SAME_WINDOW');}}",
+  "go_mentions": "{{navigateTo('Menciones', {}, 'SAME_WINDOW');}}",
+  "go_reports": "{{navigateTo('Reportes', {}, 'SAME_WINDOW');}}",
+  "go_roles": "{{navigateTo('RolesPermisos', {}, 'SAME_WINDOW');}}",
+  "go_settings": "{{navigateTo('Configuracion', {}, 'SAME_WINDOW');}}",
+  "go_targets": "{{navigateTo('Objetivos', {}, 'SAME_WINDOW');}}",
+  "go_tasks": "{{navigateTo('TareasScrapeo', {}, 'SAME_WINDOW');}}",
+  "go_users": "{{navigateTo('Usuarios', {}, 'SAME_WINDOW');}}",
+  "isCanvas": false,
+  "isLoading": false,
+  "isSearchWildcard": true,
+  "isVisible": true,
+  "key": "6sw1tnk8qa",
+  "leftColumn": 0,
+  "maxDynamicHeight": 9000,
+  "minDynamicHeight": 4,
+  "mobileBottomRow": 30,
+  "mobileLeftColumn": 0,
+  "mobileRightColumn": 23,
+  "mobileTopRow": 0,
+  "needsErrorInfo": false,
+  "onLogout": "{{navigateTo('Login', {}, 'SAME_WINDOW');}}",
+  "onResetClick": "{{showAlert('Successfully reset!!', '');}}",
+  "parentColumnSpace": 22.125,
+  "parentId": "0",
+  "parentRowSpace": 10,
+  "renderMode": "CANVAS",
+  "rightColumn": 64,
+  "srcDoc": {
+    "css": "@import url(\"https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,500&family=Inter:wght@400;500;600;700&display=swap\");\n* {\n  margin: 0;\n  padding: 0;\n  box-sizing: border-box;\n}\n\n.sl-app {\n  --ink: #0A1F19;\n  --paper: #F5F2EA;\n  --card: #FFFFFF;\n  --line: #E3DCCB;\n  --line-soft: #EDE7D9;\n  --text: #1F2823;\n  --muted: #8A8574;\n  --gold: #B08A3C;\n  --gold-bright: #D8B45E;\n  --gold-soft: rgba(176, 138, 60, 0.12);\n  --green: #175243;\n  --green-soft: rgba(23, 82, 67, 0.08);\n  display: flex;\n  height: 100vh;\n  background: var(--paper);\n  color: var(--text);\n  font-family: \"Inter\", sans-serif;\n}\n\n.sidebar {\n  width: 250px;\n  background: var(--ink);\n  color: #F3EFE4;\n  display: flex;\n  flex-direction: column;\n}\n\n.brand-row {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 22px 20px;\n  border-bottom: 1px solid rgba(243, 239, 228, 0.08);\n}\n\n.brand-tile {\n  width: 40px;\n  height: 40px;\n  border-radius: 11px;\n  background: linear-gradient(135deg, var(--gold-bright), var(--gold));\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  flex-shrink: 0;\n}\n\n.brand-tile svg {\n  width: 20px;\n  height: 20px;\n  color: var(--ink);\n}\n\n.brand-text {\n  display: flex;\n  flex-direction: column;\n}\n\n.brand-name {\n  font-family: \"Playfair Display\", serif;\n  font-size: 15px;\n  font-weight: 700;\n}\n\n.brand-tag {\n  font-size: 9px;\n  color: var(--gold-bright);\n  text-transform: uppercase;\n  letter-spacing: 0.14em;\n  margin-top: 2px;\n}\n\n.nav-menu {\n  list-style: none;\n  padding: 12px 12px;\n  flex: 1;\n  overflow-y: auto;\n}\n\n.nav-group {\n  margin-bottom: 6px;\n}\n\n.nav-section-head {\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  padding: 10px 14px 6px;\n  font-size: 9px;\n  font-weight: 600;\n  text-transform: uppercase;\n  letter-spacing: 0.16em;\n  color: rgba(243, 239, 228, 0.35);\n  cursor: pointer;\n  user-select: none;\n  transition: color 0.2s;\n}\n\n.nav-section-head:hover {\n  color: rgba(243, 239, 228, 0.65);\n}\n\n.nav-section-head::after {\n  content: \"\";\n  width: 7px;\n  height: 7px;\n  border-right: 1.5px solid currentColor;\n  border-bottom: 1.5px solid currentColor;\n  transform: rotate(45deg);\n  transition: transform 0.2s;\n}\n\n.nav-group.collapsed .nav-section-head::after {\n  transform: rotate(-45deg);\n}\n\n.nav-group-items {\n  list-style: none;\n}\n\n.nav-group.collapsed .nav-group-items {\n  display: none;\n}\n\n.nav-item {\n  position: relative;\n  padding: 10px 14px;\n  margin-bottom: 3px;\n  border-radius: 8px;\n  cursor: pointer;\n  font-size: 13px;\n  font-weight: 500;\n  color: rgba(243, 239, 228, 0.6);\n  transition: all 0.2s;\n}\n\n.nav-item:hover {\n  background: rgba(243, 239, 228, 0.06);\n  color: #F3EFE4;\n}\n\n.nav-item.active {\n  background: linear-gradient(90deg, rgba(216, 180, 94, 0.16), transparent);\n  color: var(--gold-bright);\n}\n\n.nav-item.active::before {\n  content: \"\";\n  position: absolute;\n  left: 0;\n  top: 22%;\n  height: 56%;\n  width: 3px;\n  border-radius: 3px;\n  background: var(--gold);\n}\n\n.sidebar-footer {\n  padding: 14px;\n  border-top: 1px solid rgba(243, 239, 228, 0.08);\n}\n\n.logout-btn {\n  width: 100%;\n  padding: 10px;\n  background: transparent;\n  border: 1px solid rgba(243, 239, 228, 0.15);\n  border-radius: 8px;\n  color: rgba(243, 239, 228, 0.6);\n  font-size: 12px;\n  font-weight: 500;\n  font-family: \"Inter\", sans-serif;\n  cursor: pointer;\n  transition: all 0.2s;\n}\n\n.logout-btn:hover {\n  border-color: var(--gold);\n  color: var(--gold-bright);\n}\n\n.main {\n  flex: 1;\n  display: flex;\n  flex-direction: column;\n  min-width: 0;\n}\n\n.topbar {\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  padding: 18px 28px;\n  border-bottom: 1px solid var(--line);\n}\n\n.topbar-kicker {\n  font-size: 9px;\n  font-weight: 600;\n  text-transform: uppercase;\n  letter-spacing: 0.16em;\n  color: var(--gold);\n}\n\n.topbar h2 {\n  font-family: \"Playfair Display\", serif;\n  font-size: 22px;\n  font-weight: 700;\n  margin-top: 2px;\n}\n\n.user-chip {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  background: var(--card);\n  border: 1px solid var(--line);\n  border-radius: 12px;\n  padding: 8px 14px;\n}\n\n.user-avatar {\n  width: 34px;\n  height: 34px;\n  border-radius: 50%;\n  background: var(--green);\n  color: #F1E8D2;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 13px;\n  font-weight: 700;\n}\n\n.user-info {\n  display: flex;\n  flex-direction: column;\n  gap: 2px;\n}\n\n.user-info #userEmail {\n  font-size: 12px;\n  font-weight: 600;\n}\n\n.role-badge {\n  font-size: 9px;\n  font-weight: 700;\n  text-transform: uppercase;\n  letter-spacing: 0.12em;\n  color: var(--gold);\n}\n\n.content {\n  flex: 1;\n  padding: 26px 28px;\n  overflow-y: auto;\n}",
+    "html": "<div class=\"sl-app\">\n  <nav class=\"sidebar\">\n    <div class=\"brand-row\">\n      <div class=\"brand-tile\">\n        <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n          <path d=\"M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z\"></path>\n          <polyline points=\"3.27 6.96 12 12.01 20.73 6.96\"></polyline>\n          <line x1=\"12\" y1=\"22.08\" x2=\"12\" y2=\"12\"></line>\n        </svg>\n      </div>\n      <div class=\"brand-text\">\n        <span class=\"brand-name\">Social Listening</span>\n        <span class=\"brand-tag\">Panel Ejecutivo</span>\n      </div>\n    </div>\n    <ul id=\"navMenu\" class=\"nav-menu\"></ul>\n    <div class=\"sidebar-footer\">\n      <button id=\"logoutBtn\" class=\"logout-btn\">Cerrar sesión</button>\n    </div>\n  </nav>\n\n  <div class=\"main\">\n    <header class=\"topbar\">\n      <div class=\"topbar-title\">\n        <span class=\"topbar-kicker\">Social Listening · CRM</span>\n        <h2 id=\"viewTitle\">Dashboard Ejecutivo</h2>\n      </div>\n      <div class=\"user-chip\">\n        <div class=\"user-avatar\" id=\"userAvatar\">A</div>\n        <div class=\"user-info\">\n          <span id=\"userEmail\"></span>\n          <span id=\"userRole\" class=\"role-badge\"></span>\n        </div>\n      </div>\n    </header>\n    <main id=\"contentArea\" class=\"content\"></main>\n  </div>\n</div>",
+    "js": "appsmith.onReady(function () {\n  var navMenu = document.getElementById('navMenu');\n  try {\n    var model = appsmith.model || {};\n    var role = model.userRole || 'viewer';\n    var email = model.userEmail || '';\n    var active = model.active || 'dashboard';\n    document.getElementById('userEmail').textContent = email;\n    document.getElementById('userRole').textContent = role.toUpperCase();\n    document.getElementById('userAvatar').textContent = email.charAt(0).toUpperCase() || 'A';\n    var MENU = [{\n      section: 'Análisis',\n      items: [{\n        id: 'dashboard',\n        label: 'Dashboard',\n        roles: ['admin', 'analyst', 'viewer']\n      }, {\n        id: 'mentions',\n        label: 'Menciones',\n        roles: ['admin', 'analyst', 'viewer']\n      }, {\n        id: 'analytics',\n        label: 'Analítica',\n        roles: ['admin', 'analyst']\n      }, {\n        id: 'competitors',\n        label: 'Competencia',\n        roles: ['admin', 'analyst']\n      }]\n    }, {\n      section: 'Gestión',\n      items: [{\n        id: 'targets',\n        label: 'Objetivos',\n        roles: ['admin', 'analyst']\n      }, {\n        id: 'alerts',\n        label: 'Alertas',\n        roles: ['admin', 'analyst', 'viewer']\n      }, {\n        id: 'reports',\n        label: 'Reportes',\n        roles: ['admin', 'analyst', 'viewer']\n      }]\n    }, {\n      section: 'Administración',\n      items: [{\n        id: 'tasks',\n        label: 'Tareas de Scrapeo',\n        roles: ['admin']\n      }, {\n        id: 'integrations',\n        label: 'Integraciones',\n        roles: ['admin']\n      }, {\n        id: 'users',\n        label: 'Usuarios',\n        roles: ['admin']\n      }, {\n        id: 'roles',\n        label: 'Roles y Permisos',\n        roles: ['admin']\n      }, {\n        id: 'audit',\n        label: 'Auditoría',\n        roles: ['admin']\n      }, {\n        id: 'settings',\n        label: 'Configuración',\n        roles: ['admin']\n      }, {\n        id: 'billing',\n        label: 'Plan y Suscripción',\n        roles: ['admin']\n      }]\n    }];\n    var TITLES = {\n      dashboard: 'Dashboard Ejecutivo',\n      mentions: 'Menciones',\n      analytics: 'Analítica',\n      competitors: 'Competencia',\n      targets: 'Objetivos Monitoreados',\n      alerts: 'Alertas',\n      reports: 'Reportes',\n      tasks: 'Tareas de Scrapeo',\n      integrations: 'Integraciones',\n      users: 'Usuarios',\n      roles: 'Roles y Permisos',\n      audit: 'Auditoría',\n      settings: 'Configuración',\n      billing: 'Plan y Suscripción'\n    };\n    navMenu.innerHTML = '';\n    MENU.forEach(function (section) {\n      var visible = [];\n      for (var i = 0; i < section.items.length; i++) {\n        if (section.items[i].roles.indexOf(role) !== -1) {\n          visible.push(section.items[i]);\n        }\n      }\n      if (visible.length === 0) {\n        return;\n      }\n      var containsActive = false;\n      for (var j = 0; j < visible.length; j++) {\n        if (visible[j].id === active) {\n          containsActive = true;\n        }\n      }\n      var group = document.createElement('li');\n      group.className = 'nav-group' + (containsActive ? '' : ' collapsed');\n      var head = document.createElement('div');\n      head.className = 'nav-section-head';\n      var headLabel = document.createElement('span');\n      headLabel.textContent = section.section;\n      head.appendChild(headLabel);\n      head.addEventListener('click', function () {\n        if (group.classList.contains('collapsed')) {\n          group.classList.remove('collapsed');\n        } else {\n          group.classList.add('collapsed');\n        }\n      });\n      group.appendChild(head);\n      var list = document.createElement('ul');\n      list.className = 'nav-group-items';\n      visible.forEach(function (item) {\n        var li = document.createElement('li');\n        li.className = 'nav-item' + (item.id === active ? ' active' : '');\n        li.textContent = item.label;\n        li.addEventListener('click', function () {\n          appsmith.triggerEvent('go_' + item.id);\n        });\n        list.appendChild(li);\n      });\n      group.appendChild(list);\n      navMenu.appendChild(group);\n    });\n    document.getElementById('viewTitle').textContent = TITLES[active] || 'Dashboard Ejecutivo';\n    document.getElementById('logoutBtn').addEventListener('click', function () {\n      appsmith.triggerEvent('onLogout');\n    });\n  } catch (err) {\n    navMenu.innerHTML = '<li style=\"color:#F87171;padding:12px;font-size:11px;\">ERROR: ' + err.message + '</li>';\n  }\n});"
+  },
+  "theme": "{{appsmith.theme}}",
+  "topRow": 0,
+  "type": "CUSTOM_WIDGET",
+  "uncompiledSrcDoc": {
+    "css": "@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,500&family=Inter:wght@400;500;600;700&display=swap');\n\n* { margin: 0; padding: 0; box-sizing: border-box; }\n\n.sl-app {\n  --ink: #0A1F19;\n  --paper: #F5F2EA;\n  --card: #FFFFFF;\n  --line: #E3DCCB;\n  --line-soft: #EDE7D9;\n  --text: #1F2823;\n  --muted: #8A8574;\n  --gold: #B08A3C;\n  --gold-bright: #D8B45E;\n  --gold-soft: rgba(176, 138, 60, 0.12);\n  --green: #175243;\n  --green-soft: rgba(23, 82, 67, 0.08);\n  display: flex;\n  height: 100vh;\n  background: var(--paper);\n  color: var(--text);\n  font-family: 'Inter', sans-serif;\n}\n\n.sidebar { width: 250px; background: var(--ink); color: #F3EFE4; display: flex; flex-direction: column; }\n\n.brand-row { display: flex; align-items: center; gap: 12px; padding: 22px 20px; border-bottom: 1px solid rgba(243, 239, 228, 0.08); }\n\n.brand-tile {\n  width: 40px; height: 40px; border-radius: 11px;\n  background: linear-gradient(135deg, var(--gold-bright), var(--gold));\n  display: flex; align-items: center; justify-content: center; flex-shrink: 0;\n}\n\n.brand-tile svg { width: 20px; height: 20px; color: var(--ink); }\n.brand-text { display: flex; flex-direction: column; }\n.brand-name { font-family: 'Playfair Display', serif; font-size: 15px; font-weight: 700; }\n.brand-tag { font-size: 9px; color: var(--gold-bright); text-transform: uppercase; letter-spacing: 0.14em; margin-top: 2px; }\n\n.nav-menu { list-style: none; padding: 12px 12px; flex: 1; overflow-y: auto; }\n\n.nav-group { margin-bottom: 6px; }\n\n.nav-section-head {\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  padding: 10px 14px 6px;\n  font-size: 9px;\n  font-weight: 600;\n  text-transform: uppercase;\n  letter-spacing: 0.16em;\n  color: rgba(243, 239, 228, 0.35);\n  cursor: pointer;\n  user-select: none;\n  transition: color 0.2s;\n}\n\n.nav-section-head:hover { color: rgba(243, 239, 228, 0.65); }\n\n.nav-section-head::after {\n  content: '';\n  width: 7px;\n  height: 7px;\n  border-right: 1.5px solid currentColor;\n  border-bottom: 1.5px solid currentColor;\n  transform: rotate(45deg);\n  transition: transform 0.2s;\n}\n\n.nav-group.collapsed .nav-section-head::after { transform: rotate(-45deg); }\n\n.nav-group-items { list-style: none; }\n\n.nav-group.collapsed .nav-group-items { display: none; }\n\n.nav-item {\n  position: relative;\n  padding: 10px 14px;\n  margin-bottom: 3px;\n  border-radius: 8px;\n  cursor: pointer;\n  font-size: 13px;\n  font-weight: 500;\n  color: rgba(243, 239, 228, 0.6);\n  transition: all 0.2s;\n}\n\n.nav-item:hover { background: rgba(243, 239, 228, 0.06); color: #F3EFE4; }\n\n.nav-item.active { background: linear-gradient(90deg, rgba(216, 180, 94, 0.16), transparent); color: var(--gold-bright); }\n\n.nav-item.active::before {\n  content: '';\n  position: absolute; left: 0; top: 22%; height: 56%; width: 3px;\n  border-radius: 3px; background: var(--gold);\n}\n\n.sidebar-footer { padding: 14px; border-top: 1px solid rgba(243, 239, 228, 0.08); }\n\n.logout-btn {\n  width: 100%; padding: 10px;\n  background: transparent;\n  border: 1px solid rgba(243, 239, 228, 0.15);\n  border-radius: 8px;\n  color: rgba(243, 239, 228, 0.6);\n  font-size: 12px; font-weight: 500; font-family: 'Inter', sans-serif;\n  cursor: pointer; transition: all 0.2s;\n}\n\n.logout-btn:hover { border-color: var(--gold); color: var(--gold-bright); }\n\n.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }\n\n.topbar { display: flex; justify-content: space-between; align-items: center; padding: 18px 28px; border-bottom: 1px solid var(--line); }\n\n.topbar-kicker { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.16em; color: var(--gold); }\n.topbar h2 { font-family: 'Playfair Display', serif; font-size: 22px; font-weight: 700; margin-top: 2px; }\n\n.user-chip { display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px 14px; }\n\n.user-avatar {\n  width: 34px; height: 34px; border-radius: 50%;\n  background: var(--green); color: #F1E8D2;\n  display: flex; align-items: center; justify-content: center;\n  font-size: 13px; font-weight: 700;\n}\n\n.user-info { display: flex; flex-direction: column; gap: 2px; }\n.user-info #userEmail { font-size: 12px; font-weight: 600; }\n\n.role-badge { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--gold); }\n\n.content { flex: 1; padding: 26px 28px; overflow-y: auto; }",
+    "html": "<div class=\"sl-app\">\n  <nav class=\"sidebar\">\n    <div class=\"brand-row\">\n      <div class=\"brand-tile\">\n        <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n          <path d=\"M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z\"></path>\n          <polyline points=\"3.27 6.96 12 12.01 20.73 6.96\"></polyline>\n          <line x1=\"12\" y1=\"22.08\" x2=\"12\" y2=\"12\"></line>\n        </svg>\n      </div>\n      <div class=\"brand-text\">\n        <span class=\"brand-name\">Social Listening</span>\n        <span class=\"brand-tag\">Panel Ejecutivo</span>\n      </div>\n    </div>\n    <ul id=\"navMenu\" class=\"nav-menu\"></ul>\n    <div class=\"sidebar-footer\">\n      <button id=\"logoutBtn\" class=\"logout-btn\">Cerrar sesión</button>\n    </div>\n  </nav>\n\n  <div class=\"main\">\n    <header class=\"topbar\">\n      <div class=\"topbar-title\">\n        <span class=\"topbar-kicker\">Social Listening · CRM</span>\n        <h2 id=\"viewTitle\">Dashboard Ejecutivo</h2>\n      </div>\n      <div class=\"user-chip\">\n        <div class=\"user-avatar\" id=\"userAvatar\">A</div>\n        <div class=\"user-info\">\n          <span id=\"userEmail\"></span>\n          <span id=\"userRole\" class=\"role-badge\"></span>\n        </div>\n      </div>\n    </header>\n    <main id=\"contentArea\" class=\"content\"></main>\n  </div>\n</div>",
+    "js": "appsmith.onReady(function () {\n  var navMenu = document.getElementById('navMenu');\n\n  try {\n    var model = appsmith.model || {};\n    var role = model.userRole || 'viewer';\n    var email = model.userEmail || '';\n    var active = model.active || 'dashboard';\n\n    document.getElementById('userEmail').textContent = email;\n    document.getElementById('userRole').textContent = role.toUpperCase();\n    document.getElementById('userAvatar').textContent = email.charAt(0).toUpperCase() || 'A';\n\n    var MENU = [\n      { section: 'Análisis', items: [\n        { id: 'dashboard', label: 'Dashboard', roles: ['admin', 'analyst', 'viewer'] },\n        { id: 'mentions', label: 'Menciones', roles: ['admin', 'analyst', 'viewer'] },\n        { id: 'analytics', label: 'Analítica', roles: ['admin', 'analyst'] },\n        { id: 'competitors', label: 'Competencia', roles: ['admin', 'analyst'] }\n      ]},\n      { section: 'Gestión', items: [\n        { id: 'targets', label: 'Objetivos', roles: ['admin', 'analyst'] },\n        { id: 'alerts', label: 'Alertas', roles: ['admin', 'analyst', 'viewer'] },\n        { id: 'reports', label: 'Reportes', roles: ['admin', 'analyst', 'viewer'] }\n      ]},\n      { section: 'Administración', items: [\n        { id: 'tasks', label: 'Tareas de Scrapeo', roles: ['admin'] },\n        { id: 'integrations', label: 'Integraciones', roles: ['admin'] },\n        { id: 'users', label: 'Usuarios', roles: ['admin'] },\n        { id: 'roles', label: 'Roles y Permisos', roles: ['admin'] },\n        { id: 'audit', label: 'Auditoría', roles: ['admin'] },\n        { id: 'settings', label: 'Configuración', roles: ['admin'] },\n        { id: 'billing', label: 'Plan y Suscripción', roles: ['admin'] }\n      ]}\n    ];\n\n    var TITLES = {\n      dashboard: 'Dashboard Ejecutivo',\n      mentions: 'Menciones',\n      analytics: 'Analítica',\n      competitors: 'Competencia',\n      targets: 'Objetivos Monitoreados',\n      alerts: 'Alertas',\n      reports: 'Reportes',\n      tasks: 'Tareas de Scrapeo',\n      integrations: 'Integraciones',\n      users: 'Usuarios',\n      roles: 'Roles y Permisos',\n      audit: 'Auditoría',\n      settings: 'Configuración',\n      billing: 'Plan y Suscripción'\n    };\n\n    navMenu.innerHTML = '';\n\n    MENU.forEach(function (section) {\n      var visible = [];\n      for (var i = 0; i < section.items.length; i++) {\n        if (section.items[i].roles.indexOf(role) !== -1) { visible.push(section.items[i]); }\n      }\n      if (visible.length === 0) { return; }\n\n      var containsActive = false;\n      for (var j = 0; j < visible.length; j++) {\n        if (visible[j].id === active) { containsActive = true; }\n      }\n\n      var group = document.createElement('li');\n      group.className = 'nav-group' + (containsActive ? '' : ' collapsed');\n\n      var head = document.createElement('div');\n      head.className = 'nav-section-head';\n      var headLabel = document.createElement('span');\n      headLabel.textContent = section.section;\n      head.appendChild(headLabel);\n\n      head.addEventListener('click', function () {\n        if (group.classList.contains('collapsed')) {\n          group.classList.remove('collapsed');\n        } else {\n          group.classList.add('collapsed');\n        }\n      });\n\n      group.appendChild(head);\n\n      var list = document.createElement('ul');\n      list.className = 'nav-group-items';\n\n      visible.forEach(function (item) {\n        var li = document.createElement('li');\n        li.className = 'nav-item' + (item.id === active ? ' active' : '');\n        li.textContent = item.label;\n        li.addEventListener('click', function () {\n          appsmith.triggerEvent('go_' + item.id);\n        });\n        list.appendChild(li);\n      });\n\n      group.appendChild(list);\n      navMenu.appendChild(group);\n    });\n\n    document.getElementById('viewTitle').textContent = TITLES[active] || 'Dashboard Ejecutivo';\n\n    document.getElementById('logoutBtn').addEventListener('click', function () {\n      appsmith.triggerEvent('onLogout');\n    });\n  } catch (err) {\n    navMenu.innerHTML = '<li style=\"color:#F87171;padding:12px;font-size:11px;\">ERROR: ' + err.message + '</li>';\n  }\n});"
+  },
+  "version": 1,
+  "widgetId": "6u43jk2o3n",
+  "widgetName": "CustomWidget1"
+}

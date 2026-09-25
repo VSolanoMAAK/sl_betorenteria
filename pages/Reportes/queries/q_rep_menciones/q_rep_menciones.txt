@@ -1,0 +1,9 @@
+SELECT t.platform,
+       count(*)::int AS menciones,
+       count(DISTINCT c.author_name)::int AS autores
+FROM sl_comments c
+JOIN sl_social_posts p ON p.id = c.post_id
+JOIN sl_monitored_targets t ON t.id = p.target_id
+WHERE c.published_at >= NOW() - make_interval(days => {{this.params.dias}})
+GROUP BY t.platform
+ORDER BY menciones DESC;

@@ -1,0 +1,5 @@
+SELECT c.author_name, count(*)::int AS menciones
+FROM sl_comments c
+GROUP BY c.author_name
+ORDER BY menciones DESC
+LIMIT 5;

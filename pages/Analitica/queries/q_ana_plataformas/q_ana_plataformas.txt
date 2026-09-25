@@ -1,0 +1,20 @@
+WITH latest AS (
+  SELECT DISTINCT ON (post_id) post_id, likes_count, comments_count
+  FROM sl_post_metrics
+  ORDER BY post_id, fetched_at DESC
+)
+SELECT t.platform,
+       count(DISTINCT p.id)::int AS posts,
+       coalesce(sum(l.likes_count),0)::bigint AS reacciones,
+       coalesce(sum(l.comments_count),0)::bigint AS comentarios,
+       (SELECT count(*)
+        FROM sl_comments c
+        JOIN sl_social_posts p2 ON p2.id = c.post_id
+        JOIN sl_monitored_targets t2 ON t2.id = p2.target_id
+        WHERE t2.platform = t.platform)::int AS menciones,
+       round(avg(coalesce(l.likes_count,0) + coalesce(l.comments_count,0)),1) AS engagement_prom
+FROM sl_social_posts p
+JOIN sl_monitored_targets t ON t.id = p.target_id
+LEFT JOIN latest l ON l.post_id = p.id
+GROUP BY t.platform
+ORDER BY reacciones DESC;

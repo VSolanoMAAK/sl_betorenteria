@@ -1,0 +1,78 @@
+-- ============================================
+-- DATOS SEMILLA: TENANT INICIAL
+-- ============================================
+INSERT INTO sl_tenants (name, plan_type) VALUES 
+('Demo Tenant', 'enterprise');
+
+-- ============================================
+-- ROLES (3 niveles de acceso)
+-- ============================================
+INSERT INTO sl_roles (tenant_id, name, description) 
+SELECT id, 'admin', 'Acceso total al sistema' FROM sl_tenants WHERE name = 'Demo Tenant';
+
+INSERT INTO sl_roles (tenant_id, name, description) 
+SELECT id, 'analyst', 'Puede monitorear y ver reportes' FROM sl_tenants WHERE name = 'Demo Tenant';
+
+INSERT INTO sl_roles (tenant_id, name, description) 
+SELECT id, 'viewer', 'Solo lectura de dashboards' FROM sl_tenants WHERE name = 'Demo Tenant';
+
+-- ============================================
+-- PERMISOS DEL SISTEMA
+-- ============================================
+INSERT INTO sl_permissions (resource, action, description) VALUES
+('dashboard', 'view', 'Ver dashboard ejecutivo'),
+('targets', 'create', 'Crear objetivos de monitoreo'),
+('targets', 'edit', 'Editar objetivos'),
+('targets', 'delete', 'Eliminar objetivos'),
+('targets', 'view', 'Ver objetivos'),
+('posts', 'view', 'Ver posts sociales'),
+('posts', 'export', 'Exportar datos de posts'),
+('metrics', 'view', 'Ver métricas'),
+('reports', 'create', 'Crear reportes'),
+('reports', 'view', 'Ver reportes'),
+('users', 'manage', 'Gestionar usuarios'),
+('settings', 'manage', 'Gestionar configuración');
+
+-- ============================================
+-- ASIGNAR PERMISOS A ROLES
+-- ============================================
+
+-- Admin: todos los permisos
+INSERT INTO sl_role_permissions (role_id, permission_id)
+SELECT r.id, p.id 
+FROM sl_roles r, sl_permissions p 
+WHERE r.name = 'admin' AND r.tenant_id = (SELECT id FROM sl_tenants WHERE name = 'Demo Tenant');
+
+-- Analyst: permisos de monitoreo y reportes (sin gestión de usuarios)
+INSERT INTO sl_role_permissions (role_id, permission_id)
+SELECT r.id, p.id 
+FROM sl_roles r, sl_permissions p 
+WHERE r.name = 'analyst' 
+AND r.tenant_id = (SELECT id FROM sl_tenants WHERE name = 'Demo Tenant')
+AND p.resource IN ('dashboard', 'targets', 'posts', 'metrics', 'reports')
+AND p.action IN ('view', 'create', 'edit', 'export');
+
+-- Viewer: solo lectura
+INSERT INTO sl_role_permissions (role_id, permission_id)
+SELECT r.id, p.id 
+FROM sl_roles r, sl_permissions p 
+WHERE r.name = 'viewer' 
+AND r.tenant_id = (SELECT id FROM sl_tenants WHERE name = 'Demo Tenant')
+AND p.action = 'view';
+
+-- ============================================
+-- USUARIO ADMIN INICIAL
+-- Password: admin123 (hash SHA-256 simplificado para demo)
+-- En producción usar bcrypt/argon2
+-- ============================================
+INSERT INTO sl_users (tenant_id, email, password_hash, is_active)
+SELECT id, 'admin@demo.com', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', TRUE
+FROM sl_tenants WHERE name = 'Demo Tenant';
+
+-- Asignar rol admin al usuario
+INSERT INTO sl_user_roles (user_id, role_id)
+SELECT u.id, r.id 
+FROM sl_users u, sl_roles r 
+WHERE u.email = 'admin@demo.com' 
+AND r.name = 'admin' 
+AND u.tenant_id = r.tenant_id;

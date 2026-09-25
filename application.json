@@ -1,0 +1,110 @@
+{
+  "appIsExample": false,
+  "applicationDetail": {
+    "appPositioning": {
+      "type": "FIXED"
+    },
+    "navigationSetting": {
+      "colorStyle": "light",
+      "logoAssetId": "",
+      "logoConfiguration": "logoAndApplicationTitle",
+      "navStyle": "stacked",
+      "orientation": "top",
+      "position": "static",
+      "showNavbar": false,
+      "showSignIn": true
+    },
+    "themeSetting": {
+      "appMaxWidth": "LARGE",
+      "density": 1.0,
+      "sizing": 1.0
+    }
+  },
+  "applicationVersion": 2,
+  "collapseInvisibleWidgets": true,
+  "color": "#D6D1F2",
+  "evaluationVersion": 2,
+  "icon": "package",
+  "pages": [
+    {
+      "id": "Login",
+      "isDefault": true
+    },
+    {
+      "id": "Dashboard",
+      "isDefault": false
+    },
+    {
+      "id": "Menciones",
+      "isDefault": false
+    },
+    {
+      "id": "Analitica",
+      "isDefault": false
+    },
+    {
+      "id": "Competencia",
+      "isDefault": false
+    },
+    {
+      "id": "Objetivos",
+      "isDefault": false
+    },
+    {
+      "id": "Alertas",
+      "isDefault": false
+    },
+    {
+      "id": "Reportes",
+      "isDefault": false
+    },
+    {
+      "id": "TareasScrapeo",
+      "isDefault": false
+    },
+    {
+      "id": "Integraciones",
+      "isDefault": false
+    },
+    {
+      "id": "Usuarios",
+      "isDefault": false
+    },
+    {
+      "id": "RolesPermisos",
+      "isDefault": false
+    },
+    {
+      "id": "Auditoria",
+      "isDefault": false
+    },
+    {
+      "id": "Configuracion",
+      "isDefault": false
+    },
+    {
+      "id": "Plan",
+      "isDefault": false
+    }
+  ],
+  "unpublishedApplicationDetail": {
+    "appPositioning": {
+      "type": "FIXED"
+    },
+    "navigationSetting": {
+      "colorStyle": "light",
+      "logoAssetId": "",
+      "logoConfiguration": "logoAndApplicationTitle",
+      "navStyle": "stacked",
+      "orientation": "top",
+      "position": "static",
+      "showNavbar": false,
+      "showSignIn": true
+    },
+    "themeSetting": {
+      "appMaxWidth": "LARGE",
+      "density": 1.0,
+      "sizing": 1.0
+    }
+  }
+}

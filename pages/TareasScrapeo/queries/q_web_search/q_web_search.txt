@@ -1,0 +1,8 @@
+{{
+  {
+    searchPhrase: CustomWidget1.model.searchPhrase || "",
+    dateFrom: CustomWidget1.model.dateFrom || "",
+    dateTo: CustomWidget1.model.dateTo || "",
+    originFilter: CustomWidget1.model.originFilter || ""
+  }
+}}

@@ -1,0 +1,22 @@
+CREATE TABLE public.sl_alerts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    tenant_id UUID NOT NULL
+        REFERENCES public.sl_tenants(id)
+        ON DELETE CASCADE,
+
+    comment_id UUID NOT NULL
+        REFERENCES public.sl_comments(id)
+        ON DELETE CASCADE,
+
+    alert_type VARCHAR(50) NOT NULL
+        DEFAULT 'new_comment',
+
+    created_at TIMESTAMPTZ NOT NULL
+        DEFAULT CURRENT_TIMESTAMP,
+
+    read_at TIMESTAMPTZ,
+
+    CONSTRAINT sl_alerts_comment_unique
+        UNIQUE (comment_id)
+);

@@ -1,0 +1,5 @@
+SELECT t.platform, count(*) AS menciones
+FROM sl_comments c
+JOIN sl_social_posts p ON p.id = c.post_id
+JOIN sl_monitored_targets t ON t.id = p.target_id
+GROUP BY t.platform;

@@ -1,0 +1,4 @@
+UPDATE sl_monitored_targets
+SET is_competitor = NOT is_competitor
+WHERE id = {{this.params.id}}
+RETURNING id, is_competitor;

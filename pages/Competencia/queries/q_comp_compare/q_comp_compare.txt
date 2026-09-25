@@ -1,0 +1,14 @@
+WITH latest AS (
+  SELECT DISTINCT ON (post_id) post_id, likes_count, comments_count
+  FROM sl_post_metrics
+  ORDER BY post_id, fetched_at DESC
+)
+SELECT t.is_competitor,
+       count(DISTINCT p.id)::int AS posts,
+       coalesce(sum(l.likes_count),0)::bigint AS reacciones,
+       coalesce(sum(l.comments_count),0)::bigint AS comentarios,
+       round(avg(coalesce(l.likes_count,0) + coalesce(l.comments_count,0)),1) AS engagement_prom
+FROM sl_monitored_targets t
+LEFT JOIN sl_social_posts p ON p.target_id = t.id
+LEFT JOIN latest l ON l.post_id = p.id
+GROUP BY t.is_competitor;

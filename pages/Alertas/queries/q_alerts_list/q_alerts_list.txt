@@ -1,0 +1,41 @@
+SELECT
+    a.id AS alert_id,
+    a.tenant_id,
+    a.alert_type,
+    a.created_at AS alert_created_at,
+    a.read_at,
+    CASE
+        WHEN a.read_at IS NULL THEN 'unread'
+        ELSE 'read'
+    END AS status,
+
+    c.id AS comment_id,
+    c.content_text AS comment_text,
+    c.author_name,
+    c.published_at AS comment_published_at,
+
+    p.id AS post_id,
+    p.content_text AS post_text,
+    p.post_url,
+
+    t.id AS target_id,
+    t.handle AS target_handle,
+    t.platform
+
+FROM public.sl_alerts a
+
+INNER JOIN public.sl_comments c
+    ON c.id = a.comment_id
+    AND c.tenant_id = a.tenant_id
+
+INNER JOIN public.sl_social_posts p
+    ON p.id = c.post_id
+    AND p.tenant_id = a.tenant_id
+
+INNER JOIN public.sl_monitored_targets t
+    ON t.id = p.target_id
+    AND t.tenant_id = a.tenant_id
+
+ORDER BY
+    a.created_at DESC,
+    a.id DESC;

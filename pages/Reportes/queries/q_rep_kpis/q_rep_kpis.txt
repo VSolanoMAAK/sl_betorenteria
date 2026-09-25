@@ -1,0 +1,12 @@
+WITH latest AS (
+  SELECT DISTINCT ON (post_id) post_id, likes_count, comments_count
+  FROM sl_post_metrics
+  ORDER BY post_id, fetched_at DESC
+)
+SELECT count(*)::int AS posts,
+       coalesce(sum(l.likes_count),0)::bigint AS reacciones,
+       coalesce(sum(l.comments_count),0)::bigint AS comentarios,
+       round(avg(coalesce(l.likes_count,0) + coalesce(l.comments_count,0)),1) AS engagement_promedio
+FROM sl_social_posts p
+LEFT JOIN latest l ON l.post_id = p.id
+WHERE p.published_at >= NOW() - make_interval(days => {{this.params.dias}});

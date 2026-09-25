@@ -1,0 +1,20 @@
+CREATE OR REPLACE FUNCTION public.sl_create_comment_alert()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+    INSERT INTO public.sl_alerts (
+        tenant_id,
+        comment_id
+    )
+    VALUES (
+        NEW.tenant_id,
+        NEW.id
+    )
+    ON CONFLICT (comment_id) DO NOTHING;
+
+    RETURN NEW;
+END;
+$$;
