@@ -1,0 +1,236 @@
+BEGIN;
+
+-- ============================================================
+-- 1. Preparar Objetivos para relaciones multi-tenant seguras
+-- ============================================================
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'public.sl_monitored_targets'::regclass
+          AND conname = 'sl_monitored_targets_tenant_id_id_unique'
+    ) THEN
+        ALTER TABLE public.sl_monitored_targets
+        ADD CONSTRAINT sl_monitored_targets_tenant_id_id_unique
+        UNIQUE (tenant_id, id);
+    END IF;
+END
+$$;
+
+
+-- ============================================================
+-- 2. Consultas
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS public.sl_queries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    tenant_id UUID NOT NULL
+        REFERENCES public.sl_tenants(id)
+        ON DELETE CASCADE,
+
+    name TEXT NOT NULL,
+
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+
+    use_web BOOLEAN NOT NULL DEFAULT FALSE,
+
+    formula_text TEXT NOT NULL,
+
+    settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT sl_queries_name_check
+        CHECK (
+            btrim(name) <> ''
+            AND char_length(btrim(name)) <= 200
+        ),
+
+    CONSTRAINT sl_queries_status_check
+        CHECK (
+            status IN ('active', 'inactive')
+        ),
+
+    CONSTRAINT sl_queries_formula_check
+        CHECK (
+            btrim(formula_text) <> ''
+        ),
+
+    CONSTRAINT sl_queries_settings_check
+        CHECK (
+            jsonb_typeof(settings) = 'object'
+        ),
+
+    CONSTRAINT sl_queries_tenant_id_id_unique
+        UNIQUE (tenant_id, id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS sl_queries_tenant_name_unique
+    ON public.sl_queries (
+        tenant_id,
+        lower(btrim(name))
+    );
+
+CREATE INDEX IF NOT EXISTS sl_queries_tenant_status_idx
+    ON public.sl_queries (
+        tenant_id,
+        status,
+        updated_at DESC
+    );
+
+
+-- ============================================================
+-- 3. Grupos de reglas
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS public.sl_query_groups (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    tenant_id UUID NOT NULL,
+    query_id UUID NOT NULL,
+
+    group_no INTEGER NOT NULL,
+
+    join_operator VARCHAR(10) NOT NULL DEFAULT 'OR',
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT sl_query_groups_query_fk
+        FOREIGN KEY (tenant_id, query_id)
+        REFERENCES public.sl_queries(tenant_id, id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT sl_query_groups_number_check
+        CHECK (
+            group_no > 0
+        ),
+
+    CONSTRAINT sl_query_groups_join_operator_check
+        CHECK (
+            join_operator IN ('OR', 'AND')
+        ),
+
+    CONSTRAINT sl_query_groups_query_number_unique
+        UNIQUE (
+            tenant_id,
+            query_id,
+            group_no
+        ),
+
+    CONSTRAINT sl_query_groups_tenant_id_id_unique
+        UNIQUE (
+            tenant_id,
+            id
+        )
+);
+
+CREATE INDEX IF NOT EXISTS sl_query_groups_query_idx
+    ON public.sl_query_groups (
+        tenant_id,
+        query_id,
+        group_no
+    );
+
+
+-- ============================================================
+-- 4. Términos de cada grupo
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS public.sl_query_terms (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    tenant_id UUID NOT NULL,
+    group_id UUID NOT NULL,
+
+    operator VARCHAR(20) NOT NULL,
+
+    term TEXT NOT NULL,
+
+    position INTEGER NOT NULL DEFAULT 1,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT sl_query_terms_group_fk
+        FOREIGN KEY (tenant_id, group_id)
+        REFERENCES public.sl_query_groups(tenant_id, id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT sl_query_terms_operator_check
+        CHECK (
+            operator IN (
+                'include',
+                'and',
+                'and_not'
+            )
+        ),
+
+    CONSTRAINT sl_query_terms_term_check
+        CHECK (
+            btrim(term) <> ''
+            AND char_length(btrim(term)) <= 500
+        ),
+
+    CONSTRAINT sl_query_terms_position_check
+        CHECK (
+            position > 0
+        )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS sl_query_terms_unique
+    ON public.sl_query_terms (
+        tenant_id,
+        group_id,
+        operator,
+        lower(btrim(term))
+    );
+
+CREATE INDEX IF NOT EXISTS sl_query_terms_group_idx
+    ON public.sl_query_terms (
+        tenant_id,
+        group_id,
+        position
+    );
+
+
+-- ============================================================
+-- 5. Objetivos sociales asociados a Consultas
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS public.sl_query_targets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    tenant_id UUID NOT NULL,
+    query_id UUID NOT NULL,
+    target_id UUID NOT NULL,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT sl_query_targets_query_fk
+        FOREIGN KEY (tenant_id, query_id)
+        REFERENCES public.sl_queries(tenant_id, id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT sl_query_targets_target_fk
+        FOREIGN KEY (tenant_id, target_id)
+        REFERENCES public.sl_monitored_targets(tenant_id, id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT sl_query_targets_unique
+        UNIQUE (
+            tenant_id,
+            query_id,
+            target_id
+        )
+);
+
+CREATE INDEX IF NOT EXISTS sl_query_targets_target_idx
+    ON public.sl_query_targets (
+        tenant_id,
+        target_id
+    );
+
+COMMIT;
