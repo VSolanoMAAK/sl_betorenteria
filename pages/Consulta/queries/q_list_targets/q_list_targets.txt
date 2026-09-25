@@ -1,0 +1,16 @@
+SELECT
+    t.id,
+    t.platform,
+    t.external_profile_id,
+    t.handle,
+    t.status,
+    to_char(t.created_at, 'DD/MM/YYYY') AS created_fmt
+FROM public.sl_monitored_targets t
+WHERE t.tenant_id = (
+    SELECT u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) = lower({{appsmith.store.userEmail}})
+      AND u.is_active = TRUE
+    LIMIT 1
+)
+ORDER BY t.created_at DESC;

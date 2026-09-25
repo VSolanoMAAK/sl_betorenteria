@@ -85,6 +85,10 @@
     {
       "id": "Plan",
       "isDefault": false
+    },
+    {
+      "id": "Consulta",
+      "isDefault": false
     }
   ],
   "unpublishedApplicationDetail": {

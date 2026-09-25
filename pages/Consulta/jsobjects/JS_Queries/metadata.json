@@ -1,0 +1,11 @@
+{
+  "gitSyncId": "6a9b555e277a9d17c2bbaffc_a3c18242-576e-4c3a-9582-5cb1a4756645",
+  "id": "Consulta_JS_Queries",
+  "unpublishedCollection": {
+    "name": "JS_Queries",
+    "pageId": "Consulta",
+    "pluginId": "js-plugin",
+    "pluginType": "JS",
+    "variables": []
+  }
+}
