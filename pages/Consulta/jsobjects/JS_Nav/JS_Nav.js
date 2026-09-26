@@ -17,12 +17,12 @@ export default {
       billing: 'Plan'
     };
 
-    var target = CustomWidget1.model.navTo;
+    var target = CustomWidget.model.navTo;
     var tries = 0;
 
     while (!target && tries < 10) {
       await new Promise(function (r) { setTimeout(r, 100); });
-      target = CustomWidget1.model.navTo;
+      target = CustomWidget.model.navTo;
       tries++;
     }
 

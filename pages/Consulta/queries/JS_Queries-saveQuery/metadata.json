@@ -1,6 +1,6 @@
 {
-  "gitSyncId": "6a9b555e277a9d17c2bbaffc_bc652106-ba5c-407c-a1d1-b6157a1f4b89",
-  "id": "Consulta_JS_Queries.loadData",
+  "gitSyncId": "6a9b555e277a9d17c2bbaffc_889edec8-6655-4bcc-8b27-42a1b69523c4",
+  "id": "Consulta_JS_Queries.saveQuery",
   "pluginId": "js-plugin",
   "pluginType": "JS",
   "unpublishedAction": {
@@ -22,8 +22,8 @@
         "key": "body"
       }
     ],
-    "fullyQualifiedName": "JS_Queries.loadData",
-    "name": "loadData",
+    "fullyQualifiedName": "JS_Queries.saveQuery",
+    "name": "saveQuery",
     "pageId": "Consulta",
     "runBehaviour": "MANUAL",
     "userSetOnLoad": false

@@ -1,0 +1,191 @@
+WITH user_ctx AS (
+    SELECT u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) = lower({{appsmith.store.userEmail}})
+      AND u.is_active = TRUE
+    LIMIT 1
+),
+
+payload AS (
+    SELECT
+        btrim({{CustomWidget.model.query_name}}::text) AS query_name,
+        {{CustomWidget.model.query_status}}::text AS query_status,
+        {{CustomWidget.model.query_use_web}}::boolean AS use_web,
+        btrim({{CustomWidget.model.query_formula}}::text) AS formula_text,
+        {{CustomWidget.model.query_groups_json}}::jsonb AS groups_json,
+        {{CustomWidget.model.query_target_ids_json}}::jsonb AS target_ids_json
+),
+
+new_query AS (
+    INSERT INTO public.sl_queries (
+        tenant_id,
+        name,
+        status,
+        use_web,
+        formula_text
+    )
+    SELECT
+        u.tenant_id,
+        p.query_name,
+        p.query_status,
+        p.use_web,
+        p.formula_text
+    FROM user_ctx u
+    CROSS JOIN payload p
+    RETURNING
+        id,
+        tenant_id,
+        name,
+        status,
+        use_web,
+        formula_text,
+        created_at
+),
+
+group_source AS (
+    SELECT
+        q.tenant_id,
+        q.id AS query_id,
+        (g.item->>'group_no')::integer AS group_no,
+        g.item AS group_data
+    FROM new_query q
+    CROSS JOIN payload p
+    CROSS JOIN LATERAL jsonb_array_elements(p.groups_json) AS g(item)
+),
+
+new_groups AS (
+    INSERT INTO public.sl_query_groups (
+        tenant_id,
+        query_id,
+        group_no,
+        join_operator
+    )
+    SELECT
+        tenant_id,
+        query_id,
+        group_no,
+        'OR'
+    FROM group_source
+    RETURNING
+        id,
+        tenant_id,
+        query_id,
+        group_no
+),
+
+term_source AS (
+    SELECT
+        ng.tenant_id,
+        ng.id AS group_id,
+        'include'::varchar AS operator,
+        t.term,
+        t.position::integer
+    FROM new_groups ng
+    JOIN group_source gs
+      ON gs.tenant_id = ng.tenant_id
+     AND gs.query_id = ng.query_id
+     AND gs.group_no = ng.group_no
+    CROSS JOIN LATERAL
+        jsonb_array_elements_text(
+            COALESCE(gs.group_data->'include', '[]'::jsonb)
+        )
+        WITH ORDINALITY AS t(term, position)
+
+    UNION ALL
+
+    SELECT
+        ng.tenant_id,
+        ng.id,
+        'and'::varchar,
+        t.term,
+        t.position::integer
+    FROM new_groups ng
+    JOIN group_source gs
+      ON gs.tenant_id = ng.tenant_id
+     AND gs.query_id = ng.query_id
+     AND gs.group_no = ng.group_no
+    CROSS JOIN LATERAL
+        jsonb_array_elements_text(
+            COALESCE(gs.group_data->'and', '[]'::jsonb)
+        )
+        WITH ORDINALITY AS t(term, position)
+
+    UNION ALL
+
+    SELECT
+        ng.tenant_id,
+        ng.id,
+        'and_not'::varchar,
+        t.term,
+        t.position::integer
+    FROM new_groups ng
+    JOIN group_source gs
+      ON gs.tenant_id = ng.tenant_id
+     AND gs.query_id = ng.query_id
+     AND gs.group_no = ng.group_no
+    CROSS JOIN LATERAL
+        jsonb_array_elements_text(
+            COALESCE(gs.group_data->'and_not', '[]'::jsonb)
+        )
+        WITH ORDINALITY AS t(term, position)
+),
+
+inserted_terms AS (
+    INSERT INTO public.sl_query_terms (
+        tenant_id,
+        group_id,
+        operator,
+        term,
+        position
+    )
+    SELECT
+        tenant_id,
+        group_id,
+        operator,
+        btrim(term),
+        position
+    FROM term_source
+    WHERE btrim(term) <> ''
+    RETURNING id
+),
+
+target_source AS (
+    SELECT
+        q.tenant_id,
+        q.id AS query_id,
+        t.target_id::uuid AS target_id
+    FROM new_query q
+    CROSS JOIN payload p
+    CROSS JOIN LATERAL
+        jsonb_array_elements_text(p.target_ids_json)
+        AS t(target_id)
+),
+
+inserted_targets AS (
+    INSERT INTO public.sl_query_targets (
+        tenant_id,
+        query_id,
+        target_id
+    )
+    SELECT
+        s.tenant_id,
+        s.query_id,
+        s.target_id
+    FROM target_source s
+    INNER JOIN public.sl_monitored_targets mt
+        ON mt.tenant_id = s.tenant_id
+       AND mt.id = s.target_id
+    RETURNING id
+)
+
+SELECT
+    q.id AS query_id,
+    q.name,
+    q.status,
+    q.use_web,
+    q.formula_text,
+    q.created_at,
+    (SELECT count(*) FROM new_groups)::integer AS groups_created,
+    (SELECT count(*) FROM inserted_terms)::integer AS terms_created,
+    (SELECT count(*) FROM inserted_targets)::integer AS targets_linked
+FROM new_query q;

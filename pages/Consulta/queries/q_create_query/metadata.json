@@ -1,0 +1,35 @@
+{
+  "gitSyncId": "6a9b555e277a9d17c2bbaffc_c5aad709-52f0-4761-9b17-c86ae9596ee0",
+  "id": "Consulta_q_create_query",
+  "pluginId": "postgres-plugin",
+  "pluginType": "DB",
+  "unpublishedAction": {
+    "actionConfiguration": {
+      "body": "WITH user_ctx AS (\n    SELECT u.tenant_id\n    FROM public.sl_users u\n    WHERE lower(u.email) = lower({{appsmith.store.userEmail}})\n      AND u.is_active = TRUE\n    LIMIT 1\n),\n\npayload AS (\n    SELECT\n        btrim({{CustomWidget.model.query_name}}::text) AS query_name,\n        {{CustomWidget.model.query_status}}::text AS query_status,\n        {{CustomWidget.model.query_use_web}}::boolean AS use_web,\n        btrim({{CustomWidget.model.query_formula}}::text) AS formula_text,\n        {{CustomWidget.model.query_groups_json}}::jsonb AS groups_json,\n        {{CustomWidget.model.query_target_ids_json}}::jsonb AS target_ids_json\n),\n\nnew_query AS (\n    INSERT INTO public.sl_queries (\n        tenant_id,\n        name,\n        status,\n        use_web,\n        formula_text\n    )\n    SELECT\n        u.tenant_id,\n        p.query_name,\n        p.query_status,\n        p.use_web,\n        p.formula_text\n    FROM user_ctx u\n    CROSS JOIN payload p\n    RETURNING\n        id,\n        tenant_id,\n        name,\n        status,\n        use_web,\n        formula_text,\n        created_at\n),\n\ngroup_source AS (\n    SELECT\n        q.tenant_id,\n        q.id AS query_id,\n        (g.item->>'group_no')::integer AS group_no,\n        g.item AS group_data\n    FROM new_query q\n    CROSS JOIN payload p\n    CROSS JOIN LATERAL jsonb_array_elements(p.groups_json) AS g(item)\n),\n\nnew_groups AS (\n    INSERT INTO public.sl_query_groups (\n        tenant_id,\n        query_id,\n        group_no,\n        join_operator\n    )\n    SELECT\n        tenant_id,\n        query_id,\n        group_no,\n        'OR'\n    FROM group_source\n    RETURNING\n        id,\n        tenant_id,\n        query_id,\n        group_no\n),\n\nterm_source AS (\n    SELECT\n        ng.tenant_id,\n        ng.id AS group_id,\n        'include'::varchar AS operator,\n        t.term,\n        t.position::integer\n    FROM new_groups ng\n    JOIN group_source gs\n      ON gs.tenant_id = ng.tenant_id\n     AND gs.query_id = ng.query_id\n     AND gs.group_no = ng.group_no\n    CROSS JOIN LATERAL\n        jsonb_array_elements_text(\n            COALESCE(gs.group_data->'include', '[]'::jsonb)\n        )\n        WITH ORDINALITY AS t(term, position)\n\n    UNION ALL\n\n    SELECT\n        ng.tenant_id,\n        ng.id,\n        'and'::varchar,\n        t.term,\n        t.position::integer\n    FROM new_groups ng\n    JOIN group_source gs\n      ON gs.tenant_id = ng.tenant_id\n     AND gs.query_id = ng.query_id\n     AND gs.group_no = ng.group_no\n    CROSS JOIN LATERAL\n        jsonb_array_elements_text(\n            COALESCE(gs.group_data->'and', '[]'::jsonb)\n        )\n        WITH ORDINALITY AS t(term, position)\n\n    UNION ALL\n\n    SELECT\n        ng.tenant_id,\n        ng.id,\n        'and_not'::varchar,\n        t.term,\n        t.position::integer\n    FROM new_groups ng\n    JOIN group_source gs\n      ON gs.tenant_id = ng.tenant_id\n     AND gs.query_id = ng.query_id\n     AND gs.group_no = ng.group_no\n    CROSS JOIN LATERAL\n        jsonb_array_elements_text(\n            COALESCE(gs.group_data->'and_not', '[]'::jsonb)\n        )\n        WITH ORDINALITY AS t(term, position)\n),\n\ninserted_terms AS (\n    INSERT INTO public.sl_query_terms (\n        tenant_id,\n        group_id,\n        operator,\n        term,\n        position\n    )\n    SELECT\n        tenant_id,\n        group_id,\n        operator,\n        btrim(term),\n        position\n    FROM term_source\n    WHERE btrim(term) <> ''\n    RETURNING id\n),\n\ntarget_source AS (\n    SELECT\n        q.tenant_id,\n        q.id AS query_id,\n        t.target_id::uuid AS target_id\n    FROM new_query q\n    CROSS JOIN payload p\n    CROSS JOIN LATERAL\n        jsonb_array_elements_text(p.target_ids_json)\n        AS t(target_id)\n),\n\ninserted_targets AS (\n    INSERT INTO public.sl_query_targets (\n        tenant_id,\n        query_id,\n        target_id\n    )\n    SELECT\n        s.tenant_id,\n        s.query_id,\n        s.target_id\n    FROM target_source s\n    INNER JOIN public.sl_monitored_targets mt\n        ON mt.tenant_id = s.tenant_id\n       AND mt.id = s.target_id\n    RETURNING id\n)\n\nSELECT\n    q.id AS query_id,\n    q.name,\n    q.status,\n    q.use_web,\n    q.formula_text,\n    q.created_at,\n    (SELECT count(*) FROM new_groups)::integer AS groups_created,\n    (SELECT count(*) FROM inserted_terms)::integer AS terms_created,\n    (SELECT count(*) FROM inserted_targets)::integer AS targets_linked\nFROM new_query q;",
+      "encodeParamsToggle": true,
+      "paginationType": "NONE",
+      "pluginSpecifiedTemplates": [
+        {
+          "value": true
+        }
+      ],
+      "timeoutInMillisecond": 10000
+    },
+    "confirmBeforeExecute": false,
+    "datasource": {
+      "id": "SL_Listening",
+      "isAutoGenerated": false,
+      "name": "SL_Listening",
+      "pluginId": "postgres-plugin"
+    },
+    "dynamicBindingPathList": [
+      {
+        "key": "body"
+      }
+    ],
+    "name": "q_create_query",
+    "pageId": "Consulta",
+    "runBehaviour": "MANUAL",
+    "userSetOnLoad": false
+  }
+}

@@ -1,0 +1,11 @@
+SELECT
+    table_name
+FROM information_schema.tables
+WHERE table_schema = 'public'
+  AND table_name IN (
+      'sl_queries',
+      'sl_query_groups',
+      'sl_query_terms',
+      'sl_query_targets'
+  )
+ORDER BY table_name;
