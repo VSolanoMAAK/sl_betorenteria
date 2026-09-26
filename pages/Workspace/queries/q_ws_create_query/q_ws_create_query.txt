@@ -1,0 +1,394 @@
+WITH user_ctx AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) =
+          lower({{appsmith.store.userEmail}})
+      AND u.is_active = TRUE
+    LIMIT 1
+),
+
+payload AS (
+    SELECT
+        btrim(
+            {{CW_Constructor.model.query_name}}::text
+        ) AS query_name,
+
+        lower(
+            btrim(
+                {{CW_Constructor.model.query_status}}::text
+            )
+        ) AS query_status,
+
+        {{CW_Constructor.model.query_use_web}}::boolean
+            AS use_web,
+
+        btrim(
+            {{CW_Constructor.model.query_formula}}::text
+        ) AS formula_text,
+
+        {{CW_Constructor.model.query_groups_json}}::jsonb
+            AS groups_json,
+
+        {{CW_Constructor.model.query_target_ids_json}}::jsonb
+            AS target_ids_json
+),
+
+validated_input AS (
+    SELECT
+        u.tenant_id,
+        p.query_name,
+        p.query_status,
+        p.use_web,
+        p.formula_text,
+        p.groups_json,
+        p.target_ids_json
+    FROM user_ctx u
+    CROSS JOIN payload p
+    WHERE p.query_name <> ''
+      AND p.formula_text <> ''
+
+      AND p.query_status IN (
+          'active',
+          'inactive'
+      )
+
+      AND jsonb_typeof(
+          p.groups_json
+      ) = 'array'
+
+      AND jsonb_array_length(
+          p.groups_json
+      ) BETWEEN 1 AND 3
+
+      AND jsonb_typeof(
+          p.target_ids_json
+      ) = 'array'
+
+      AND EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(
+              p.groups_json
+          ) AS g(item)
+          WHERE jsonb_typeof(
+              COALESCE(
+                  g.item->'include',
+                  '[]'::jsonb
+              )
+          ) = 'array'
+            AND EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements_text(
+                    COALESCE(
+                        g.item->'include',
+                        '[]'::jsonb
+                    )
+                ) AS term(value)
+                WHERE btrim(
+                    term.value
+                ) <> ''
+            )
+      )
+
+      AND (
+          p.use_web = TRUE
+
+          OR EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(
+                  p.target_ids_json
+              ) AS selected(target_id)
+
+              INNER JOIN public.sl_monitored_targets mt
+                ON mt.tenant_id = u.tenant_id
+               AND mt.id::text =
+                   selected.target_id
+               AND mt.status = 'active'
+          )
+      )
+),
+
+new_query AS (
+    INSERT INTO public.sl_queries (
+        tenant_id,
+        name,
+        status,
+        use_web,
+        formula_text
+    )
+    SELECT
+        v.tenant_id,
+        v.query_name,
+        v.query_status,
+        v.use_web,
+        v.formula_text
+    FROM validated_input v
+    RETURNING
+        id,
+        tenant_id,
+        name,
+        status,
+        use_web,
+        formula_text,
+        created_at
+),
+
+group_source AS (
+    SELECT
+        q.tenant_id,
+        q.id AS query_id,
+
+        g.ordinality::integer
+            AS group_no,
+
+        g.item AS group_data
+    FROM new_query q
+
+    INNER JOIN validated_input v
+      ON v.tenant_id = q.tenant_id
+
+    CROSS JOIN LATERAL
+        jsonb_array_elements(
+            v.groups_json
+        )
+        WITH ORDINALITY
+        AS g(item, ordinality)
+),
+
+new_groups AS (
+    INSERT INTO public.sl_query_groups (
+        tenant_id,
+        query_id,
+        group_no,
+        join_operator
+    )
+    SELECT
+        gs.tenant_id,
+        gs.query_id,
+        gs.group_no,
+        'OR'
+    FROM group_source gs
+    RETURNING
+        id,
+        tenant_id,
+        query_id,
+        group_no
+),
+
+term_source AS (
+    SELECT
+        ng.tenant_id,
+        ng.id AS group_id,
+
+        'include'::varchar
+            AS operator,
+
+        btrim(
+            t.term
+        ) AS term,
+
+        t.position::integer
+            AS position
+    FROM new_groups ng
+
+    INNER JOIN group_source gs
+      ON gs.tenant_id = ng.tenant_id
+     AND gs.query_id = ng.query_id
+     AND gs.group_no = ng.group_no
+
+    CROSS JOIN LATERAL
+        jsonb_array_elements_text(
+            CASE
+                WHEN jsonb_typeof(
+                    gs.group_data->'include'
+                ) = 'array'
+                THEN gs.group_data->'include'
+                ELSE '[]'::jsonb
+            END
+        )
+        WITH ORDINALITY
+        AS t(term, position)
+
+    WHERE btrim(
+        t.term
+    ) <> ''
+
+    UNION ALL
+
+    SELECT
+        ng.tenant_id,
+        ng.id,
+
+        'and'::varchar,
+
+        btrim(
+            t.term
+        ),
+
+        t.position::integer
+    FROM new_groups ng
+
+    INNER JOIN group_source gs
+      ON gs.tenant_id = ng.tenant_id
+     AND gs.query_id = ng.query_id
+     AND gs.group_no = ng.group_no
+
+    CROSS JOIN LATERAL
+        jsonb_array_elements_text(
+            CASE
+                WHEN jsonb_typeof(
+                    gs.group_data->'and'
+                ) = 'array'
+                THEN gs.group_data->'and'
+                ELSE '[]'::jsonb
+            END
+        )
+        WITH ORDINALITY
+        AS t(term, position)
+
+    WHERE btrim(
+        t.term
+    ) <> ''
+
+    UNION ALL
+
+    SELECT
+        ng.tenant_id,
+        ng.id,
+
+        'and_not'::varchar,
+
+        btrim(
+            t.term
+        ),
+
+        t.position::integer
+    FROM new_groups ng
+
+    INNER JOIN group_source gs
+      ON gs.tenant_id = ng.tenant_id
+     AND gs.query_id = ng.query_id
+     AND gs.group_no = ng.group_no
+
+    CROSS JOIN LATERAL
+        jsonb_array_elements_text(
+            CASE
+                WHEN jsonb_typeof(
+                    gs.group_data->'and_not'
+                ) = 'array'
+                THEN gs.group_data->'and_not'
+                ELSE '[]'::jsonb
+            END
+        )
+        WITH ORDINALITY
+        AS t(term, position)
+
+    WHERE btrim(
+        t.term
+    ) <> ''
+),
+
+deduplicated_terms AS (
+    SELECT DISTINCT ON (
+        ts.tenant_id,
+        ts.group_id,
+        ts.operator,
+        lower(ts.term)
+    )
+        ts.tenant_id,
+        ts.group_id,
+        ts.operator,
+        ts.term,
+        ts.position
+    FROM term_source ts
+    ORDER BY
+        ts.tenant_id,
+        ts.group_id,
+        ts.operator,
+        lower(ts.term),
+        ts.position
+),
+
+inserted_terms AS (
+    INSERT INTO public.sl_query_terms (
+        tenant_id,
+        group_id,
+        operator,
+        term,
+        position
+    )
+    SELECT
+        dt.tenant_id,
+        dt.group_id,
+        dt.operator,
+        dt.term,
+        dt.position
+    FROM deduplicated_terms dt
+    RETURNING
+        id
+),
+
+target_source AS (
+    SELECT DISTINCT
+        q.tenant_id,
+        q.id AS query_id,
+        mt.id AS target_id
+    FROM new_query q
+
+    INNER JOIN validated_input v
+      ON v.tenant_id = q.tenant_id
+
+    CROSS JOIN LATERAL
+        jsonb_array_elements_text(
+            v.target_ids_json
+        ) AS selected(target_id)
+
+    INNER JOIN public.sl_monitored_targets mt
+      ON mt.tenant_id = q.tenant_id
+     AND mt.id::text =
+         selected.target_id
+     AND mt.status = 'active'
+),
+
+inserted_targets AS (
+    INSERT INTO public.sl_query_targets (
+        tenant_id,
+        query_id,
+        target_id
+    )
+    SELECT
+        ts.tenant_id,
+        ts.query_id,
+        ts.target_id
+    FROM target_source ts
+    RETURNING
+        id
+)
+
+SELECT
+    q.id AS query_id,
+    q.name,
+    q.status,
+    q.use_web,
+    q.formula_text,
+    q.created_at,
+
+    (
+        SELECT COUNT(*)
+        FROM new_groups
+    )::integer
+        AS groups_created,
+
+    (
+        SELECT COUNT(*)
+        FROM inserted_terms
+    )::integer
+        AS terms_created,
+
+    (
+        SELECT COUNT(*)
+        FROM inserted_targets
+    )::integer
+        AS targets_linked
+
+FROM new_query q;

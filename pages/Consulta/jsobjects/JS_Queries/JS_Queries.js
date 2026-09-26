@@ -1,12 +1,26 @@
 export default {
   loadData: async function () {
     try {
-      const targets = await q_list_targets.run();
+      const results = await Promise.all([
+        q_list_targets.run(),
+        q_list_queries.run()
+      ]);
+
+      const targets = results[0] || [];
+      const queries = results[1] || [];
 
       const targetsJson = btoa(
         unescape(
           encodeURIComponent(
-            JSON.stringify(targets || [])
+            JSON.stringify(targets)
+          )
+        )
+      );
+
+      const queriesJson = btoa(
+        unescape(
+          encodeURIComponent(
+            JSON.stringify(queries)
           )
         )
       );
@@ -16,10 +30,18 @@ export default {
         targetsJson
       );
 
-      return targets || [];
+      await storeValue(
+        'queriesJson',
+        queriesJson
+      );
+
+      return {
+        targets,
+        queries
+      };
     } catch (error) {
       showAlert(
-        'Error cargando objetivos: ' + error.message,
+        'Error cargando Consultas: ' + error.message,
         'error'
       );
 
@@ -29,7 +51,8 @@ export default {
 
   saveQuery: async function () {
     try {
-      const result = await q_create_query.run();
+      const result =
+        await q_create_query.run();
 
       if (
         !Array.isArray(result) ||
@@ -41,15 +64,44 @@ export default {
         );
       }
 
-      const savedQuery = result[0];
+      const savedQuery =
+        result[0];
+
+      try {
+        const queries =
+          await q_list_queries.run();
+
+        const queriesJson = btoa(
+          unescape(
+            encodeURIComponent(
+              JSON.stringify(
+                queries || []
+              )
+            )
+          )
+        );
+
+        await storeValue(
+          'queriesJson',
+          queriesJson
+        );
+      } catch (refreshError) {
+        console.error(
+          'La consulta se guardó, pero no fue posible actualizar el listado.',
+          refreshError
+        );
+      }
 
       await storeValue(
         'querySaveStatus',
         JSON.stringify({
           status: 'success',
-          query_id: savedQuery.query_id,
-          name: savedQuery.name,
-          timestamp: Date.now()
+          query_id:
+            savedQuery.query_id,
+          name:
+            savedQuery.name,
+          timestamp:
+            Date.now()
         })
       );
 
@@ -64,13 +116,16 @@ export default {
         'querySaveStatus',
         JSON.stringify({
           status: 'error',
-          message: error.message,
-          timestamp: Date.now()
+          message:
+            error.message,
+          timestamp:
+            Date.now()
         })
       );
 
       showAlert(
-        'Error guardando consulta: ' + error.message,
+        'Error guardando consulta: ' +
+        error.message,
         'error'
       );
 

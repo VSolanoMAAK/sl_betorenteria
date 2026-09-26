@@ -1,0 +1,46 @@
+SELECT
+    q.id,
+    q.name,
+    q.status,
+    q.use_web,
+    q.formula_text,
+    q.created_at,
+    q.updated_at,
+
+    (
+        SELECT COUNT(*)
+        FROM public.sl_query_groups g
+        WHERE g.tenant_id = q.tenant_id
+          AND g.query_id = q.id
+    )::integer AS groups_count,
+
+    (
+        SELECT COUNT(*)
+        FROM public.sl_query_terms t
+        JOIN public.sl_query_groups g
+          ON g.tenant_id = t.tenant_id
+         AND g.id = t.group_id
+        WHERE g.tenant_id = q.tenant_id
+          AND g.query_id = q.id
+    )::integer AS terms_count,
+
+    (
+        SELECT COUNT(*)
+        FROM public.sl_query_targets qt
+        WHERE qt.tenant_id = q.tenant_id
+          AND qt.query_id = q.id
+    )::integer AS targets_count
+
+FROM public.sl_queries q
+
+WHERE q.tenant_id = (
+    SELECT u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) = lower({{appsmith.store.userEmail}})
+      AND u.is_active = TRUE
+    LIMIT 1
+)
+
+ORDER BY
+    q.updated_at DESC,
+    q.created_at DESC;

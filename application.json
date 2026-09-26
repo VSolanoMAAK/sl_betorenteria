@@ -89,6 +89,10 @@
     {
       "id": "Consulta",
       "isDefault": false
+    },
+    {
+      "id": "Workspace",
+      "isDefault": false
     }
   ],
   "unpublishedApplicationDetail": {
