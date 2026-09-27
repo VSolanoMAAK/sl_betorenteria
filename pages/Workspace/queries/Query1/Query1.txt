@@ -1,0 +1,9 @@
+SELECT
+    COUNT(*)::integer AS total_rows,
+    COUNT(DISTINCT source_url)::integer AS distinct_urls,
+    (
+        COUNT(*) -
+        COUNT(DISTINCT source_url)
+    )::integer AS duplicate_rows
+FROM public.sl_web_mentions
+WHERE keyword_id = '116985c8-5bb5-4724-ade7-e5705f06b414';

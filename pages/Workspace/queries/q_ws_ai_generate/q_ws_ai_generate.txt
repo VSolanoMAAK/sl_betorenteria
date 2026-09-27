@@ -1,0 +1,4 @@
+{
+  "user_email": "{{appsmith.store.userEmail || ''}}",
+  "instruction": "{{CW_Constructor.model.ai_instruction || ''}}"
+}

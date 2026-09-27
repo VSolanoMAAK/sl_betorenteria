@@ -328,6 +328,81 @@ inserted_terms AS (
         id
 ),
 
+web_keyword_source AS (
+    SELECT DISTINCT ON (
+        ng.tenant_id,
+        ng.query_id,
+        lower(dt.term)
+    )
+        ng.tenant_id,
+        ng.query_id,
+        dt.term AS phrase
+    FROM deduplicated_terms dt
+
+    INNER JOIN new_groups ng
+      ON ng.tenant_id = dt.tenant_id
+     AND ng.id = dt.group_id
+
+    INNER JOIN new_query q
+      ON q.tenant_id = ng.tenant_id
+     AND q.id = ng.query_id
+     AND q.use_web = TRUE
+
+    WHERE dt.operator = 'include'
+
+    ORDER BY
+        ng.tenant_id,
+        ng.query_id,
+        lower(dt.term),
+        dt.position,
+        dt.term
+),
+
+upserted_web_keywords AS (
+    INSERT INTO public.sl_web_keywords (
+        tenant_id,
+        phrase
+    )
+    SELECT
+        wks.tenant_id,
+        wks.phrase
+    FROM web_keyword_source wks
+
+    ON CONFLICT ON CONSTRAINT
+        sl_web_keywords_tenant_phrase_unique
+    DO UPDATE
+        SET phrase = EXCLUDED.phrase
+
+    RETURNING
+        id,
+        tenant_id,
+        phrase
+),
+
+inserted_query_web_keywords AS (
+    INSERT INTO public.sl_query_web_keywords (
+        tenant_id,
+        query_id,
+        keyword_id
+    )
+    SELECT
+        wks.tenant_id,
+        wks.query_id,
+        wk.id
+    FROM web_keyword_source wks
+
+    INNER JOIN upserted_web_keywords wk
+      ON wk.tenant_id = wks.tenant_id
+     AND wk.phrase = wks.phrase
+
+    ON CONFLICT ON CONSTRAINT
+        sl_query_web_keywords_tenant_query_keyword_unique
+    DO NOTHING
+
+    RETURNING
+        id
+),
+
 target_source AS (
     SELECT DISTINCT
         q.tenant_id,
