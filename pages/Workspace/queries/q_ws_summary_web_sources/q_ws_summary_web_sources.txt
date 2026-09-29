@@ -1,0 +1,121 @@
+WITH params AS (
+    SELECT
+        NULLIF(
+            {{ appsmith.store.selectedQueryId || '' }},
+            ''
+        )::uuid AS query_id,
+
+        LOWER(
+            NULLIF(
+                {{ appsmith.store.userEmail || '' }},
+                ''
+            )
+        ) AS user_email,
+
+        CASE
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '24h'
+                THEN INTERVAL '24 hours'
+
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '7d'
+                THEN INTERVAL '7 days'
+
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '90d'
+                THEN INTERVAL '90 days'
+
+            ELSE INTERVAL '30 days'
+        END AS lookback
+),
+
+authorized_query AS (
+    SELECT
+        q.id,
+        q.tenant_id,
+        q.name
+
+    FROM public.sl_queries q
+
+    INNER JOIN public.sl_users u
+        ON u.tenant_id = q.tenant_id
+
+    CROSS JOIN params p
+
+    WHERE q.id = p.query_id
+      AND LOWER(u.email) = p.user_email
+      AND u.is_active = TRUE
+
+    LIMIT 1
+),
+
+web_mentions AS (
+    SELECT
+        wm.id,
+        wm.source_domain,
+        wm.source_name,
+
+        COALESCE(
+            wm.published_at,
+            wm.detected_at
+        ) AS event_at
+
+    FROM authorized_query q
+
+    INNER JOIN public.sl_query_web_mentions qwm
+        ON qwm.tenant_id = q.tenant_id
+       AND qwm.query_id = q.id
+
+    INNER JOIN public.sl_web_mentions wm
+        ON wm.tenant_id = qwm.tenant_id
+       AND wm.id = qwm.mention_id
+
+    CROSS JOIN params p
+
+    WHERE COALESCE(
+        wm.published_at,
+        wm.detected_at
+    ) >= CURRENT_TIMESTAMP - p.lookback
+)
+
+SELECT
+    q.id AS query_id,
+    q.name AS query_name,
+
+    wm.source_domain,
+
+    COALESCE(
+        NULLIF(
+            MAX(wm.source_name),
+            ''
+        ),
+        wm.source_domain
+    ) AS source_name,
+
+    COUNT(*)::integer AS mentions,
+
+    ROUND(
+        (
+            COUNT(*)::numeric /
+            NULLIF(
+                SUM(COUNT(*)) OVER (),
+                0
+            )
+        ) * 100,
+        2
+    ) AS percentage,
+
+    MAX(
+        wm.event_at
+    ) AS last_activity
+
+FROM authorized_query q
+
+INNER JOIN web_mentions wm
+    ON TRUE
+
+GROUP BY
+    q.id,
+    q.name,
+    wm.source_domain
+
+ORDER BY
+    mentions DESC,
+    wm.source_domain;

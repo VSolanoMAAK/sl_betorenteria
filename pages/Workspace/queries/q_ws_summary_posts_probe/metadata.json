@@ -1,0 +1,35 @@
+{
+  "gitSyncId": "6a9b555e277a9d17c2bbaffc_dc1f70e7-e74f-4dc2-bb11-133663ef7e14",
+  "id": "Workspace_q_ws_summary_posts_probe",
+  "pluginId": "postgres-plugin",
+  "pluginType": "DB",
+  "unpublishedAction": {
+    "actionConfiguration": {
+      "body": "WITH params AS (\n    SELECT\n        NULLIF(\n            {{ appsmith.store.selectedQueryId || '' }},\n            ''\n        )::uuid AS query_id,\n\n        LOWER(\n            NULLIF(\n                {{ appsmith.store.userEmail || '' }},\n                ''\n            )\n        ) AS user_email,\n\n        CASE\n            WHEN {{ CW_Resumen.model.period || '30d' }} = '24h'\n                THEN INTERVAL '24 hours'\n\n            WHEN {{ CW_Resumen.model.period || '30d' }} = '7d'\n                THEN INTERVAL '7 days'\n\n            WHEN {{ CW_Resumen.model.period || '30d' }} = '90d'\n                THEN INTERVAL '90 days'\n\n            ELSE INTERVAL '30 days'\n        END AS lookback\n),\n\nauthorized_query AS (\n    SELECT\n        q.id,\n        q.tenant_id,\n        q.name,\n        q.formula_text\n\n    FROM public.sl_queries q\n\n    INNER JOIN public.sl_users u\n        ON u.tenant_id = q.tenant_id\n\n    CROSS JOIN params p\n\n    WHERE q.id = p.query_id\n      AND LOWER(u.email) = p.user_email\n      AND u.is_active = TRUE\n\n    LIMIT 1\n),\n\ntarget_map AS (\n    SELECT\n        qt.target_id,\n        mt.platform,\n        mt.handle\n\n    FROM authorized_query q\n\n    INNER JOIN public.sl_query_targets qt\n        ON qt.tenant_id = q.tenant_id\n       AND qt.query_id = q.id\n\n    INNER JOIN public.sl_monitored_targets mt\n        ON mt.tenant_id = qt.tenant_id\n       AND mt.id = qt.target_id\n),\n\ncandidate_posts AS (\n    SELECT\n        p.id AS post_id,\n        p.target_id,\n        tm.platform,\n        tm.handle,\n        p.external_post_id,\n        p.content_text,\n        p.post_url,\n        p.post_type,\n\n        COALESCE(\n            p.published_at,\n            p.scraped_at\n        ) AS event_at\n\n    FROM authorized_query q\n\n    INNER JOIN target_map tm\n        ON TRUE\n\n    INNER JOIN public.sl_social_posts p\n        ON p.tenant_id = q.tenant_id\n       AND p.target_id = tm.target_id\n\n    CROSS JOIN params prm\n\n    WHERE COALESCE(\n        p.published_at,\n        p.scraped_at\n    ) >= CURRENT_TIMESTAMP - prm.lookback\n),\n\nquery_terms AS (\n    SELECT\n        g.group_no,\n        t.operator,\n        t.term,\n        t.position\n\n    FROM authorized_query q\n\n    INNER JOIN public.sl_query_groups g\n        ON g.tenant_id = q.tenant_id\n       AND g.query_id = q.id\n\n    INNER JOIN public.sl_query_terms t\n        ON t.tenant_id = g.tenant_id\n       AND t.group_id = g.id\n)\n\nSELECT\n    q.id AS query_id,\n    q.name AS query_name,\n    q.formula_text,\n\n    (\n        SELECT COUNT(*)::integer\n        FROM target_map\n    ) AS configured_targets,\n\n    (\n        SELECT COUNT(*)::integer\n        FROM candidate_posts\n    ) AS ingested_posts_in_period,\n\n    (\n        SELECT COUNT(\n            DISTINCT platform\n        )::integer\n        FROM candidate_posts\n    ) AS active_platforms,\n\n    (\n        SELECT MAX(event_at)\n        FROM candidate_posts\n    ) AS last_post_activity,\n\n    COALESCE(\n        (\n            SELECT jsonb_agg(\n                jsonb_build_object(\n                    'group_no',\n                    qt.group_no,\n\n                    'operator',\n                    qt.operator,\n\n                    'term',\n                    qt.term,\n\n                    'position',\n                    qt.position\n                )\n                ORDER BY\n                    qt.group_no,\n                    qt.position\n            )\n\n            FROM query_terms qt\n        ),\n        '[]'::jsonb\n    ) AS query_terms,\n\n    COALESCE(\n        (\n            SELECT jsonb_agg(\n                jsonb_build_object(\n                    'post_id',\n                    cp.post_id,\n\n                    'platform',\n                    cp.platform,\n\n                    'handle',\n                    cp.handle,\n\n                    'content_text',\n                    cp.content_text,\n\n                    'post_url',\n                    cp.post_url,\n\n                    'post_type',\n                    cp.post_type,\n\n                    'event_at',\n                    cp.event_at\n                )\n                ORDER BY cp.event_at DESC\n            )\n\n            FROM (\n                SELECT *\n                FROM candidate_posts\n\n                ORDER BY event_at DESC\n\n                LIMIT 20\n            ) cp\n        ),\n        '[]'::jsonb\n    ) AS sample_posts\n\nFROM authorized_query q;",
+      "encodeParamsToggle": true,
+      "paginationType": "NONE",
+      "pluginSpecifiedTemplates": [
+        {
+          "value": true
+        }
+      ],
+      "timeoutInMillisecond": 10000
+    },
+    "confirmBeforeExecute": false,
+    "datasource": {
+      "id": "SL_Listening",
+      "isAutoGenerated": false,
+      "name": "SL_Listening",
+      "pluginId": "postgres-plugin"
+    },
+    "dynamicBindingPathList": [
+      {
+        "key": "body"
+      }
+    ],
+    "name": "q_ws_summary_posts_probe",
+    "pageId": "Workspace",
+    "runBehaviour": "MANUAL",
+    "userSetOnLoad": false
+  }
+}

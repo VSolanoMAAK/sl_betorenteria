@@ -1,0 +1,1103 @@
+WITH params AS (
+    SELECT
+        CASE
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '24h'
+                THEN INTERVAL '24 hours'
+
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '7d'
+                THEN INTERVAL '7 days'
+
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '90d'
+                THEN INTERVAL '90 days'
+
+            ELSE INTERVAL '30 days'
+        END AS lookback,
+
+        {{ CW_Resumen.model.period || '30d' }}::text
+            AS period
+),
+
+period_bounds AS (
+    SELECT
+        p.period,
+        p.lookback,
+        CURRENT_TIMESTAMP - p.lookback
+            AS start_at,
+        CURRENT_TIMESTAMP
+            AS end_at
+
+    FROM params p
+),
+
+session_context AS (
+    SELECT
+        u.tenant_id
+
+    FROM public.sl_users u
+
+    WHERE LOWER(u.email) =
+        LOWER(
+            NULLIF(
+                {{ appsmith.store.userEmail || '' }},
+                ''
+            )
+        )
+
+      AND u.is_active = TRUE
+
+    LIMIT 1
+),
+
+latest_metrics AS (
+    SELECT DISTINCT ON (
+        pm.post_id
+    )
+        pm.post_id,
+
+        COALESCE(
+            pm.likes_count,
+            0
+        ) AS likes_count,
+
+        COALESCE(
+            pm.comments_count,
+            0
+        ) AS comments_count,
+
+        COALESCE(
+            pm.shares_count,
+            0
+        ) AS shares_count,
+
+        COALESCE(
+            pm.views_count,
+            0
+        ) AS views_count,
+
+        pm.fetched_at
+
+    FROM public.sl_post_metrics pm
+
+    ORDER BY
+        pm.post_id,
+        pm.fetched_at DESC NULLS LAST,
+        pm.id DESC
+),
+
+all_posts AS (
+    SELECT
+        sp.id AS post_id,
+
+        sp.target_id,
+
+        mt.platform,
+        mt.handle,
+
+        sp.external_post_id,
+        sp.content_text,
+        sp.post_url,
+        sp.post_type,
+
+        COALESCE(
+            sp.published_at,
+            sp.scraped_at
+        ) AS event_at,
+
+        COALESCE(
+            lm.likes_count,
+            0
+        ) AS likes_count,
+
+        COALESCE(
+            lm.comments_count,
+            0
+        ) AS comments_count,
+
+        COALESCE(
+            lm.shares_count,
+            0
+        ) AS shares_count,
+
+        COALESCE(
+            lm.views_count,
+            0
+        ) AS views_count,
+
+        (
+            COALESCE(
+                lm.likes_count,
+                0
+            ) +
+            COALESCE(
+                lm.comments_count,
+                0
+            ) +
+            COALESCE(
+                lm.shares_count,
+                0
+            )
+        ) AS interactions
+
+    FROM session_context sc
+
+    INNER JOIN public.sl_social_posts sp
+        ON sp.tenant_id = sc.tenant_id
+
+    INNER JOIN public.sl_monitored_targets mt
+        ON mt.tenant_id = sp.tenant_id
+       AND mt.id = sp.target_id
+
+    LEFT JOIN latest_metrics lm
+        ON lm.post_id = sp.id
+),
+
+period_posts AS (
+    SELECT
+        ap.*
+
+    FROM all_posts ap
+
+    CROSS JOIN period_bounds pb
+
+    WHERE ap.event_at >= pb.start_at
+      AND ap.event_at <= pb.end_at
+),
+
+calendar AS (
+    SELECT
+        gs AS bucket_at
+
+    FROM period_bounds pb
+
+    CROSS JOIN LATERAL generate_series(
+
+        CASE
+            WHEN pb.period = '24h'
+                THEN date_trunc(
+                    'hour',
+                    pb.start_at
+                        AT TIME ZONE
+                        'America/Mexico_City'
+                )
+
+            ELSE date_trunc(
+                'day',
+                pb.start_at
+                    AT TIME ZONE
+                    'America/Mexico_City'
+            )
+        END,
+
+        CASE
+            WHEN pb.period = '24h'
+                THEN date_trunc(
+                    'hour',
+                    pb.end_at
+                        AT TIME ZONE
+                        'America/Mexico_City'
+                )
+
+            ELSE date_trunc(
+                'day',
+                pb.end_at
+                    AT TIME ZONE
+                    'America/Mexico_City'
+            )
+        END,
+
+        CASE
+            WHEN pb.period = '24h'
+                THEN INTERVAL '1 hour'
+
+            ELSE INTERVAL '1 day'
+        END
+
+    ) AS gs
+),
+
+daily_counts AS (
+    SELECT
+        CASE
+            WHEN pb.period = '24h'
+                THEN date_trunc(
+                    'hour',
+                    pp.event_at
+                        AT TIME ZONE
+                        'America/Mexico_City'
+                )
+
+            ELSE date_trunc(
+                'day',
+                pp.event_at
+                    AT TIME ZONE
+                    'America/Mexico_City'
+            )
+        END AS bucket_at,
+
+        COUNT(*)::integer
+            AS posts,
+
+        SUM(
+            pp.interactions
+        )::bigint
+            AS interactions,
+
+        SUM(
+            pp.views_count
+        )::bigint
+            AS views
+
+    FROM period_posts pp
+
+    CROSS JOIN period_bounds pb
+
+    GROUP BY
+        CASE
+            WHEN pb.period = '24h'
+                THEN date_trunc(
+                    'hour',
+                    pp.event_at
+                        AT TIME ZONE
+                        'America/Mexico_City'
+                )
+
+            ELSE date_trunc(
+                'day',
+                pp.event_at
+                    AT TIME ZONE
+                    'America/Mexico_City'
+            )
+        END
+),
+
+timeline AS (
+    SELECT
+        c.bucket_at,
+
+        COALESCE(
+            dc.posts,
+            0
+        )::integer AS posts,
+
+        COALESCE(
+            dc.interactions,
+            0
+        )::bigint AS interactions,
+
+        COALESCE(
+            dc.views,
+            0
+        )::bigint AS views
+
+    FROM calendar c
+
+    LEFT JOIN daily_counts dc
+        ON dc.bucket_at = c.bucket_at
+
+    ORDER BY
+        c.bucket_at
+),
+
+platforms AS (
+    SELECT
+        pp.platform,
+
+        COUNT(*)::integer
+            AS posts,
+
+        SUM(
+            pp.likes_count
+        )::bigint
+            AS likes,
+
+        SUM(
+            pp.comments_count
+        )::bigint
+            AS comments,
+
+        SUM(
+            pp.shares_count
+        )::bigint
+            AS shares,
+
+        SUM(
+            pp.interactions
+        )::bigint
+            AS interactions,
+
+        SUM(
+            pp.views_count
+        )::bigint
+            AS views,
+
+        MAX(
+            pp.event_at
+        ) AS last_activity
+
+    FROM period_posts pp
+
+    GROUP BY
+        pp.platform
+),
+
+accounts AS (
+    SELECT
+        pp.target_id,
+        pp.platform,
+        pp.handle,
+
+        COUNT(*)::integer
+            AS posts,
+
+        SUM(
+            pp.likes_count
+        )::bigint
+            AS likes,
+
+        SUM(
+            pp.comments_count
+        )::bigint
+            AS comments,
+
+        SUM(
+            pp.shares_count
+        )::bigint
+            AS shares,
+
+        SUM(
+            pp.interactions
+        )::bigint
+            AS interactions,
+
+        SUM(
+            pp.views_count
+        )::bigint
+            AS views,
+
+        MAX(
+            pp.event_at
+        ) AS last_activity
+
+    FROM period_posts pp
+
+    GROUP BY
+        pp.target_id,
+        pp.platform,
+        pp.handle
+),
+
+post_types AS (
+    SELECT
+        COALESCE(
+            NULLIF(
+                BTRIM(
+                    pp.post_type
+                ),
+                ''
+            ),
+            'sin_tipo'
+        ) AS post_type,
+
+        COUNT(*)::integer
+            AS posts,
+
+        SUM(
+            pp.interactions
+        )::bigint
+            AS interactions,
+
+        SUM(
+            pp.views_count
+        )::bigint
+            AS views
+
+    FROM period_posts pp
+
+    GROUP BY
+        COALESCE(
+            NULLIF(
+                BTRIM(
+                    pp.post_type
+                ),
+                ''
+            ),
+            'sin_tipo'
+        )
+),
+
+hashtag_occurrences AS (
+    SELECT DISTINCT
+        pp.post_id,
+        pp.target_id,
+        pp.handle,
+        pp.platform,
+        pp.event_at,
+
+        LOWER(
+            (
+                rx.capture
+            )[1]
+        ) AS hashtag
+
+    FROM period_posts pp
+
+    CROSS JOIN LATERAL regexp_matches(
+        COALESCE(
+            pp.content_text,
+            ''
+        ),
+        '(#[[:alnum:]_]+)',
+        'g'
+    ) AS rx(capture)
+),
+
+hashtags AS (
+    SELECT
+        ho.hashtag,
+
+        COUNT(*)::integer
+            AS posts,
+
+        COUNT(
+            DISTINCT ho.target_id
+        )::integer
+            AS accounts,
+
+        MAX(
+            ho.event_at
+        ) AS last_activity
+
+    FROM hashtag_occurrences ho
+
+    GROUP BY
+        ho.hashtag
+),
+
+all_direct_mentions AS (
+    SELECT DISTINCT
+        ap.post_id,
+        ap.target_id,
+
+        ap.handle
+            AS source_handle,
+
+        ap.platform,
+
+        ap.event_at,
+
+        LOWER(
+            (
+                rx.capture
+            )[1]
+        ) AS mentioned_handle
+
+    FROM all_posts ap
+
+    CROSS JOIN LATERAL regexp_matches(
+        COALESCE(
+            ap.content_text,
+            ''
+        ),
+        '(@[[:alnum:]_.]+)',
+        'g'
+    ) AS rx(capture)
+),
+
+period_direct_mentions AS (
+    SELECT
+        adm.*
+
+    FROM all_direct_mentions adm
+
+    CROSS JOIN period_bounds pb
+
+    WHERE adm.event_at >= pb.start_at
+      AND adm.event_at <= pb.end_at
+),
+
+mentioned_accounts AS (
+    SELECT
+        pdm.mentioned_handle,
+
+        COUNT(*)::integer
+            AS posts,
+
+        COUNT(
+            DISTINCT pdm.target_id
+        )::integer
+            AS source_accounts,
+
+        MIN(
+            pdm.event_at
+        ) AS first_seen_period,
+
+        MAX(
+            pdm.event_at
+        ) AS last_activity,
+
+        (
+            SELECT MIN(
+                adm.event_at
+            )
+
+            FROM all_direct_mentions adm
+
+            WHERE adm.mentioned_handle =
+                pdm.mentioned_handle
+        ) AS first_seen_history
+
+    FROM period_direct_mentions pdm
+
+    GROUP BY
+        pdm.mentioned_handle
+),
+
+mention_edges AS (
+    SELECT
+        pdm.source_handle,
+        pdm.platform,
+        pdm.mentioned_handle,
+
+        COUNT(*)::integer
+            AS posts
+
+    FROM period_direct_mentions pdm
+
+    GROUP BY
+        pdm.source_handle,
+        pdm.platform,
+        pdm.mentioned_handle
+),
+
+recent_posts AS (
+    SELECT
+        pp.post_id,
+        pp.platform,
+        pp.handle,
+        pp.content_text,
+        pp.post_url,
+        pp.post_type,
+        pp.event_at,
+
+        pp.likes_count,
+        pp.comments_count,
+        pp.shares_count,
+        pp.views_count,
+        pp.interactions
+
+    FROM period_posts pp
+
+    ORDER BY
+        pp.event_at DESC,
+        pp.post_id
+
+    LIMIT 12
+),
+
+top_posts AS (
+    SELECT
+        pp.post_id,
+        pp.platform,
+        pp.handle,
+        pp.content_text,
+        pp.post_url,
+        pp.post_type,
+        pp.event_at,
+
+        pp.likes_count,
+        pp.comments_count,
+        pp.shares_count,
+        pp.views_count,
+        pp.interactions
+
+    FROM period_posts pp
+
+    ORDER BY
+        pp.interactions DESC,
+        pp.views_count DESC,
+        pp.event_at DESC
+
+    LIMIT 10
+)
+
+SELECT
+    pb.period,
+
+    CASE
+        WHEN pb.period = '24h'
+            THEN 'hour'
+
+        ELSE 'day'
+    END AS timeline_granularity,
+
+    (
+        SELECT COUNT(*)::integer
+        FROM all_posts
+    ) AS total_posts_history,
+
+    (
+        SELECT COUNT(*)::integer
+        FROM period_posts
+    ) AS posts_period,
+
+    (
+        SELECT COUNT(
+            DISTINCT target_id
+        )::integer
+        FROM period_posts
+    ) AS active_accounts,
+
+    (
+        SELECT COUNT(
+            DISTINCT platform
+        )::integer
+        FROM period_posts
+    ) AS active_platforms,
+
+    (
+        SELECT COUNT(
+            DISTINCT (
+                event_at
+                AT TIME ZONE
+                'America/Mexico_City'
+            )::date
+        )::integer
+        FROM period_posts
+    ) AS active_days,
+
+    COALESCE(
+        (
+            SELECT SUM(
+                likes_count
+            )
+            FROM period_posts
+        ),
+        0
+    )::bigint AS likes_period,
+
+    COALESCE(
+        (
+            SELECT SUM(
+                comments_count
+            )
+            FROM period_posts
+        ),
+        0
+    )::bigint AS comments_period,
+
+    COALESCE(
+        (
+            SELECT SUM(
+                shares_count
+            )
+            FROM period_posts
+        ),
+        0
+    )::bigint AS shares_period,
+
+    COALESCE(
+        (
+            SELECT SUM(
+                interactions
+            )
+            FROM period_posts
+        ),
+        0
+    )::bigint AS interactions_period,
+
+    COALESCE(
+        (
+            SELECT SUM(
+                views_count
+            )
+            FROM period_posts
+        ),
+        0
+    )::bigint AS views_period,
+
+    ROUND(
+        COALESCE(
+            (
+                SELECT SUM(
+                    interactions
+                )::numeric
+                FROM period_posts
+            ),
+            0
+        ) /
+        NULLIF(
+            (
+                SELECT COUNT(*)::numeric
+                FROM period_posts
+            ),
+            0
+        ),
+        2
+    ) AS avg_interactions_per_post,
+
+    (
+        SELECT MAX(
+            event_at
+        )
+        FROM all_posts
+    ) AS last_activity,
+
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'bucket',
+                    CASE
+                        WHEN pb.period = '24h'
+                            THEN TO_CHAR(
+                                t.bucket_at,
+                                'YYYY-MM-DD HH24:00'
+                            )
+
+                        ELSE TO_CHAR(
+                            t.bucket_at,
+                            'YYYY-MM-DD'
+                        )
+                    END,
+
+                    'posts',
+                    t.posts,
+
+                    'interactions',
+                    t.interactions,
+
+                    'views',
+                    t.views
+                )
+                ORDER BY
+                    t.bucket_at
+            )
+
+            FROM timeline t
+        ),
+        '[]'::jsonb
+    ) AS timeline,
+
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'platform',
+                    pl.platform,
+
+                    'posts',
+                    pl.posts,
+
+                    'likes',
+                    pl.likes,
+
+                    'comments',
+                    pl.comments,
+
+                    'shares',
+                    pl.shares,
+
+                    'interactions',
+                    pl.interactions,
+
+                    'views',
+                    pl.views,
+
+                    'last_activity',
+                    pl.last_activity
+                )
+                ORDER BY
+                    pl.posts DESC,
+                    pl.platform
+            )
+
+            FROM platforms pl
+        ),
+        '[]'::jsonb
+    ) AS platforms,
+
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'target_id',
+                    a.target_id,
+
+                    'platform',
+                    a.platform,
+
+                    'handle',
+                    a.handle,
+
+                    'posts',
+                    a.posts,
+
+                    'likes',
+                    a.likes,
+
+                    'comments',
+                    a.comments,
+
+                    'shares',
+                    a.shares,
+
+                    'interactions',
+                    a.interactions,
+
+                    'views',
+                    a.views,
+
+                    'last_activity',
+                    a.last_activity
+                )
+                ORDER BY
+                    a.posts DESC,
+                    a.interactions DESC
+            )
+
+            FROM accounts a
+        ),
+        '[]'::jsonb
+    ) AS accounts,
+
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'post_type',
+                    pt.post_type,
+
+                    'posts',
+                    pt.posts,
+
+                    'interactions',
+                    pt.interactions,
+
+                    'views',
+                    pt.views
+                )
+                ORDER BY
+                    pt.posts DESC,
+                    pt.post_type
+            )
+
+            FROM post_types pt
+        ),
+        '[]'::jsonb
+    ) AS post_types,
+
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'hashtag',
+                    h.hashtag,
+
+                    'posts',
+                    h.posts,
+
+                    'accounts',
+                    h.accounts,
+
+                    'last_activity',
+                    h.last_activity
+                )
+                ORDER BY
+                    h.posts DESC,
+                    h.hashtag
+            )
+
+            FROM (
+                SELECT *
+                FROM hashtags
+
+                ORDER BY
+                    posts DESC,
+                    hashtag
+
+                LIMIT 12
+            ) h
+        ),
+        '[]'::jsonb
+    ) AS hashtags,
+
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'handle',
+                    ma.mentioned_handle,
+
+                    'posts',
+                    ma.posts,
+
+                    'source_accounts',
+                    ma.source_accounts,
+
+                    'first_seen_period',
+                    ma.first_seen_period,
+
+                    'first_seen_history',
+                    ma.first_seen_history,
+
+                    'last_activity',
+                    ma.last_activity,
+
+                    'is_new',
+                    ma.first_seen_history >=
+                        pb.start_at
+                )
+                ORDER BY
+                    ma.posts DESC,
+                    ma.mentioned_handle
+            )
+
+            FROM (
+                SELECT *
+                FROM mentioned_accounts
+
+                ORDER BY
+                    posts DESC,
+                    mentioned_handle
+
+                LIMIT 20
+            ) ma
+        ),
+        '[]'::jsonb
+    ) AS mentioned_accounts,
+
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'source_handle',
+                    me.source_handle,
+
+                    'platform',
+                    me.platform,
+
+                    'mentioned_handle',
+                    me.mentioned_handle,
+
+                    'posts',
+                    me.posts
+                )
+                ORDER BY
+                    me.posts DESC,
+                    me.source_handle,
+                    me.mentioned_handle
+            )
+
+            FROM (
+                SELECT *
+                FROM mention_edges
+
+                ORDER BY
+                    posts DESC
+
+                LIMIT 30
+            ) me
+        ),
+        '[]'::jsonb
+    ) AS mention_edges,
+
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'post_id',
+                    rp.post_id,
+
+                    'platform',
+                    rp.platform,
+
+                    'handle',
+                    rp.handle,
+
+                    'content_text',
+                    rp.content_text,
+
+                    'post_url',
+                    rp.post_url,
+
+                    'post_type',
+                    rp.post_type,
+
+                    'event_at',
+                    rp.event_at,
+
+                    'likes',
+                    rp.likes_count,
+
+                    'comments',
+                    rp.comments_count,
+
+                    'shares',
+                    rp.shares_count,
+
+                    'views',
+                    rp.views_count,
+
+                    'interactions',
+                    rp.interactions
+                )
+                ORDER BY
+                    rp.event_at DESC
+            )
+
+            FROM recent_posts rp
+        ),
+        '[]'::jsonb
+    ) AS recent_posts,
+
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'post_id',
+                    tp.post_id,
+
+                    'platform',
+                    tp.platform,
+
+                    'handle',
+                    tp.handle,
+
+                    'content_text',
+                    tp.content_text,
+
+                    'post_url',
+                    tp.post_url,
+
+                    'post_type',
+                    tp.post_type,
+
+                    'event_at',
+                    tp.event_at,
+
+                    'likes',
+                    tp.likes_count,
+
+                    'comments',
+                    tp.comments_count,
+
+                    'shares',
+                    tp.shares_count,
+
+                    'views',
+                    tp.views_count,
+
+                    'interactions',
+                    tp.interactions
+                )
+                ORDER BY
+                    tp.interactions DESC,
+                    tp.views_count DESC
+            )
+
+            FROM top_posts tp
+        ),
+        '[]'::jsonb
+    ) AS top_posts
+
+FROM period_bounds pb;

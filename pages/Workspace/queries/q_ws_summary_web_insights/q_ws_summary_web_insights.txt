@@ -1,0 +1,343 @@
+WITH params AS (
+    SELECT
+        NULLIF(
+            {{ appsmith.store.selectedQueryId || '' }},
+            ''
+        )::uuid AS query_id,
+
+        LOWER(
+            NULLIF(
+                {{ appsmith.store.userEmail || '' }},
+                ''
+            )
+        ) AS user_email,
+
+        {{ CW_Resumen.model.period || '30d' }}::text
+            AS period,
+
+        CASE
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '24h'
+                THEN INTERVAL '24 hours'
+
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '7d'
+                THEN INTERVAL '7 days'
+
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '90d'
+                THEN INTERVAL '90 days'
+
+            ELSE INTERVAL '30 days'
+        END AS lookback,
+
+        CASE
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '24h'
+                THEN 1::numeric
+
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '7d'
+                THEN 7::numeric
+
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '90d'
+                THEN 90::numeric
+
+            ELSE 30::numeric
+        END AS period_days
+),
+
+authorized_query AS (
+    SELECT
+        q.id,
+        q.tenant_id,
+        q.name
+
+    FROM public.sl_queries q
+
+    INNER JOIN public.sl_users u
+        ON u.tenant_id = q.tenant_id
+
+    CROSS JOIN params p
+
+    WHERE q.id = p.query_id
+      AND LOWER(u.email) = p.user_email
+      AND u.is_active = TRUE
+
+    LIMIT 1
+),
+
+web_rows AS (
+    SELECT
+        q.id AS query_id,
+        q.name AS query_name,
+
+        wm.id AS mention_id,
+        wm.keyword_id,
+
+        wk.phrase,
+
+        wm.title,
+        wm.snippet,
+        wm.source_name,
+        wm.source_domain,
+        wm.source_url,
+
+        COALESCE(
+            wm.published_at,
+            wm.detected_at
+        ) AS event_at
+
+    FROM authorized_query q
+
+    INNER JOIN public.sl_query_web_mentions qwm
+        ON qwm.tenant_id = q.tenant_id
+       AND qwm.query_id = q.id
+
+    INNER JOIN public.sl_web_mentions wm
+        ON wm.tenant_id = qwm.tenant_id
+       AND wm.id = qwm.mention_id
+
+    INNER JOIN public.sl_web_keywords wk
+        ON wk.tenant_id = wm.tenant_id
+       AND wk.id = wm.keyword_id
+
+    CROSS JOIN params p
+
+    WHERE COALESCE(
+        wm.published_at,
+        wm.detected_at
+    ) >= CURRENT_TIMESTAMP - p.lookback
+),
+
+calendar AS (
+    SELECT
+        day::date AS day
+
+    FROM params p
+
+    CROSS JOIN LATERAL generate_series(
+        (
+            CURRENT_TIMESTAMP - p.lookback
+        ) AT TIME ZONE 'America/Mexico_City',
+
+        CURRENT_TIMESTAMP
+            AT TIME ZONE 'America/Mexico_City',
+
+        INTERVAL '1 day'
+    ) AS day
+),
+
+timeline_counts AS (
+    SELECT
+        (
+            wr.event_at
+            AT TIME ZONE 'America/Mexico_City'
+        )::date AS day,
+
+        COUNT(*)::integer AS mentions
+
+    FROM web_rows wr
+
+    GROUP BY
+        (
+            wr.event_at
+            AT TIME ZONE 'America/Mexico_City'
+        )::date
+),
+
+timeline AS (
+    SELECT
+        c.day,
+
+        COALESCE(
+            tc.mentions,
+            0
+        )::integer AS mentions
+
+    FROM calendar c
+
+    LEFT JOIN timeline_counts tc
+        ON tc.day = c.day
+
+    ORDER BY
+        c.day
+),
+
+topics_ranked AS (
+    SELECT
+        wr.keyword_id,
+
+        wr.phrase,
+
+        COUNT(*)::integer AS mentions,
+
+        ROUND(
+            COUNT(*)::numeric * 100 /
+            NULLIF(
+                SUM(COUNT(*)) OVER (),
+                0
+            ),
+            2
+        ) AS percentage
+
+    FROM web_rows wr
+
+    GROUP BY
+        wr.keyword_id,
+        wr.phrase
+),
+
+topics AS (
+    SELECT *
+    FROM topics_ranked
+
+    ORDER BY
+        mentions DESC,
+        phrase
+
+    LIMIT 8
+),
+
+recent_mentions AS (
+    SELECT
+        wr.mention_id,
+        wr.phrase,
+        wr.title,
+        wr.snippet,
+        wr.source_name,
+        wr.source_domain,
+        wr.source_url,
+        wr.event_at
+
+    FROM web_rows wr
+
+    ORDER BY
+        wr.event_at DESC,
+        wr.mention_id
+
+    LIMIT 12
+)
+
+SELECT
+    q.id AS query_id,
+    q.name AS query_name,
+    p.period,
+
+    (
+        SELECT COUNT(*)::integer
+        FROM web_rows
+    ) AS mentions,
+
+    (
+        SELECT COUNT(
+            DISTINCT source_domain
+        )::integer
+        FROM web_rows
+    ) AS unique_sources,
+
+    (
+        SELECT COUNT(
+            DISTINCT keyword_id
+        )::integer
+        FROM web_rows
+    ) AS topics_detected,
+
+    ROUND(
+        (
+            SELECT COUNT(*)::numeric
+            FROM web_rows
+        ) /
+        NULLIF(
+            p.period_days,
+            0
+        ),
+        2
+    ) AS mentions_per_day,
+
+    (
+        SELECT MAX(event_at)
+        FROM web_rows
+    ) AS last_activity,
+
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'date',
+                    TO_CHAR(
+                        t.day,
+                        'YYYY-MM-DD'
+                    ),
+
+                    'mentions',
+                    t.mentions
+                )
+                ORDER BY t.day
+            )
+
+            FROM timeline t
+        ),
+        '[]'::jsonb
+    ) AS timeline,
+
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'keyword_id',
+                    t.keyword_id,
+
+                    'topic',
+                    t.phrase,
+
+                    'mentions',
+                    t.mentions,
+
+                    'percentage',
+                    t.percentage
+                )
+                ORDER BY
+                    t.mentions DESC,
+                    t.phrase
+            )
+
+            FROM topics t
+        ),
+        '[]'::jsonb
+    ) AS topics,
+
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'mention_id',
+                    r.mention_id,
+
+                    'topic',
+                    r.phrase,
+
+                    'title',
+                    r.title,
+
+                    'snippet',
+                    r.snippet,
+
+                    'source_name',
+                    r.source_name,
+
+                    'source_domain',
+                    r.source_domain,
+
+                    'source_url',
+                    r.source_url,
+
+                    'event_at',
+                    r.event_at
+                )
+                ORDER BY r.event_at DESC
+            )
+
+            FROM recent_mentions r
+        ),
+        '[]'::jsonb
+    ) AS recent_mentions
+
+FROM authorized_query q
+
+CROSS JOIN params p;

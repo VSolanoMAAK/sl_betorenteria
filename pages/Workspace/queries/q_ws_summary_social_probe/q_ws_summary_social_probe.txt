@@ -1,0 +1,136 @@
+WITH session_context AS (
+    SELECT
+        u.tenant_id
+
+    FROM public.sl_users u
+
+    WHERE LOWER(u.email) =
+        LOWER(
+            NULLIF(
+                {{ appsmith.store.userEmail || '' }},
+                ''
+            )
+        )
+
+      AND u.is_active = TRUE
+
+    LIMIT 1
+),
+
+latest_metrics AS (
+    SELECT DISTINCT ON (
+        pm.post_id
+    )
+        pm.post_id,
+        pm.likes_count,
+        pm.comments_count,
+        pm.shares_count,
+        pm.views_count,
+        pm.fetched_at
+
+    FROM public.sl_post_metrics pm
+
+    ORDER BY
+        pm.post_id,
+        pm.fetched_at DESC NULLS LAST
+),
+
+posts AS (
+    SELECT
+        sp.id,
+        sp.target_id,
+        mt.platform,
+        mt.handle,
+
+        sp.content_text,
+        sp.post_url,
+        sp.post_type,
+
+        COALESCE(
+            sp.published_at,
+            sp.scraped_at
+        ) AS event_at,
+
+        COALESCE(
+            lm.likes_count,
+            0
+        ) AS likes_count,
+
+        COALESCE(
+            lm.comments_count,
+            0
+        ) AS comments_count,
+
+        COALESCE(
+            lm.shares_count,
+            0
+        ) AS shares_count,
+
+        COALESCE(
+            lm.views_count,
+            0
+        ) AS views_count
+
+    FROM session_context sc
+
+    INNER JOIN public.sl_social_posts sp
+        ON sp.tenant_id = sc.tenant_id
+
+    INNER JOIN public.sl_monitored_targets mt
+        ON mt.tenant_id = sp.tenant_id
+       AND mt.id = sp.target_id
+
+    LEFT JOIN latest_metrics lm
+        ON lm.post_id = sp.id
+)
+
+SELECT
+    COUNT(*)::integer
+        AS total_posts_history,
+
+    COUNT(
+        DISTINCT target_id
+    )::integer
+        AS targets_with_posts,
+
+    COUNT(
+        DISTINCT platform
+    )::integer
+        AS platforms_with_posts,
+
+    MIN(
+        event_at
+    ) AS first_post_at,
+
+    MAX(
+        event_at
+    ) AS last_post_at,
+
+    SUM(
+        likes_count
+    )::bigint
+        AS total_likes,
+
+    SUM(
+        comments_count
+    )::bigint
+        AS total_comments,
+
+    SUM(
+        shares_count
+    )::bigint
+        AS total_shares,
+
+    SUM(
+        views_count
+    )::bigint
+        AS total_views,
+
+    SUM(
+        likes_count +
+        comments_count +
+        shares_count
+    )::bigint
+        AS total_interactions
+
+FROM posts;
