@@ -1,0 +1,793 @@
+WITH params AS (
+    SELECT
+        {{
+            CW_Constructor.model.selectedQueryId ||
+            CW_Constructor.model.activeQueryId
+        }}::uuid AS query_id
+),
+
+auth_ctx AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE LOWER(u.email) =
+          LOWER({{ appsmith.store.userEmail }})
+      AND u.is_active = TRUE
+    LIMIT 1
+),
+
+latest_run AS (
+    SELECT
+        r.id AS run_id,
+        r.status,
+        r.processed_count,
+        r.new_source_count,
+        r.matched_count,
+        r.new_match_count,
+        r.error_count,
+        r.error_summary,
+        r.started_at,
+        r.finished_at,
+        r.heartbeat_at
+    FROM public.sl_query_runs r
+    JOIN auth_ctx a
+        ON a.tenant_id = r.tenant_id
+    CROSS JOIN params p
+    WHERE r.query_id = p.query_id
+    ORDER BY
+        r.created_at DESC
+    LIMIT 1
+),
+
+base_posts AS (
+    SELECT
+        qsp.id AS query_social_post_id,
+        qsp.query_id,
+        qsp.post_id,
+        qsp.first_matched_run_id,
+        qsp.last_confirmed_run_id,
+        qsp.matched_at,
+        qsp.last_confirmed_at,
+        qsp.match_type,
+        qsp.match_details,
+        qsp.definition_hash,
+
+        sp.target_id,
+        sp.external_post_id,
+        sp.content_text,
+        sp.published_at,
+        sp.scraped_at,
+        sp.post_url,
+        sp.post_type,
+
+        mt.platform,
+        mt.handle,
+        mt.external_profile_id,
+
+        COALESCE(metrics.likes_count, 0)::bigint
+            AS likes_count,
+
+        COALESCE(metrics.comments_count, 0)::bigint
+            AS platform_comments_count,
+
+        COALESCE(metrics.shares_count, 0)::bigint
+            AS shares_count,
+
+        COALESCE(metrics.views_count, 0)::bigint
+            AS views_count,
+
+        metrics.fetched_at
+            AS metrics_fetched_at,
+
+        metrics.last_observed_at
+            AS metrics_last_observed_at
+
+    FROM auth_ctx a
+
+    JOIN public.sl_query_social_posts qsp
+        ON qsp.tenant_id = a.tenant_id
+       AND qsp.is_active = TRUE
+
+    JOIN public.sl_social_posts sp
+        ON sp.id = qsp.post_id
+       AND sp.tenant_id = qsp.tenant_id
+
+    JOIN public.sl_monitored_targets mt
+        ON mt.id = sp.target_id
+       AND mt.tenant_id = qsp.tenant_id
+
+    CROSS JOIN params p
+
+    LEFT JOIN LATERAL (
+        SELECT
+            m.likes_count,
+            m.comments_count,
+            m.shares_count,
+            m.views_count,
+            m.fetched_at,
+            m.last_observed_at
+        FROM public.sl_post_metrics m
+        WHERE m.tenant_id = qsp.tenant_id
+          AND m.post_id = sp.id
+        ORDER BY
+            m.last_observed_at DESC NULLS LAST,
+            m.fetched_at DESC NULLS LAST
+        LIMIT 1
+    ) metrics
+        ON TRUE
+
+    WHERE qsp.query_id = p.query_id
+),
+
+matched_terms_raw AS (
+    SELECT
+        term_data.term
+    FROM base_posts bp
+
+    CROSS JOIN LATERAL
+        jsonb_array_elements(
+            COALESCE(
+                bp.match_details::jsonb -> 'groups',
+                '[]'::jsonb
+            )
+        ) AS grp(group_data)
+
+    CROSS JOIN LATERAL (
+        SELECT
+            jsonb_array_elements_text(
+                COALESCE(
+                    grp.group_data
+                        -> 'include'
+                        -> 'matched',
+                    '[]'::jsonb
+                )
+            ) AS term
+
+        UNION ALL
+
+        SELECT
+            jsonb_array_elements_text(
+                COALESCE(
+                    grp.group_data
+                        -> 'and'
+                        -> 'matched',
+                    '[]'::jsonb
+                )
+            ) AS term
+    ) term_data
+),
+
+matched_terms AS (
+    SELECT
+        term,
+        COUNT(*)::bigint AS occurrences
+    FROM matched_terms_raw
+    WHERE BTRIM(term) <> ''
+    GROUP BY term
+),
+
+daily_counts AS (
+    SELECT
+        DATE(bp.published_at) AS published_day,
+        COUNT(*)::bigint AS post_count
+    FROM base_posts bp
+    WHERE bp.published_at IS NOT NULL
+    GROUP BY
+        DATE(bp.published_at)
+),
+
+platform_counts AS (
+    SELECT
+        bp.platform,
+        COUNT(*)::bigint AS post_count
+    FROM base_posts bp
+    GROUP BY
+        bp.platform
+),
+
+post_type_counts AS (
+    SELECT
+        COALESCE(
+            NULLIF(BTRIM(bp.post_type), ''),
+            'sin_tipo'
+        ) AS post_type,
+
+        COUNT(*)::bigint AS post_count
+
+    FROM base_posts bp
+
+    GROUP BY
+        COALESCE(
+            NULLIF(BTRIM(bp.post_type), ''),
+            'sin_tipo'
+        )
+),
+
+source_accounts AS (
+    SELECT
+        bp.target_id,
+        bp.platform,
+        bp.handle,
+        bp.external_profile_id,
+
+        COUNT(*)::bigint
+            AS post_count,
+
+        COALESCE(
+            SUM(bp.likes_count),
+            0
+        )::bigint
+            AS likes_count,
+
+        COALESCE(
+            SUM(bp.platform_comments_count),
+            0
+        )::bigint
+            AS comments_count,
+
+        COALESCE(
+            SUM(bp.shares_count),
+            0
+        )::bigint
+            AS shares_count,
+
+        COALESCE(
+            SUM(bp.views_count),
+            0
+        )::bigint
+            AS views_count
+
+    FROM base_posts bp
+
+    GROUP BY
+        bp.target_id,
+        bp.platform,
+        bp.handle,
+        bp.external_profile_id
+),
+
+matched_comments AS (
+    SELECT
+        c.id,
+        c.post_id,
+        c.external_comment_id,
+        c.content_text,
+        c.author_id,
+        c.author_name,
+        c.author_gender,
+        c.author_url,
+        c.published_at
+    FROM public.sl_comments c
+
+    JOIN auth_ctx a
+        ON a.tenant_id = c.tenant_id
+
+    JOIN base_posts bp
+        ON bp.post_id = c.post_id
+),
+
+comment_authors AS (
+    SELECT
+        c.author_id,
+        c.author_name,
+        c.author_gender,
+        c.author_url,
+
+        COUNT(*)::bigint
+            AS comments_count,
+
+        MIN(c.published_at)
+            AS first_comment_at,
+
+        MAX(c.published_at)
+            AS last_comment_at
+
+    FROM matched_comments c
+
+    WHERE
+        NULLIF(
+            BTRIM(
+                COALESCE(
+                    c.author_id,
+                    c.author_name,
+                    ''
+                )
+            ),
+            ''
+        ) IS NOT NULL
+
+    GROUP BY
+        c.author_id,
+        c.author_name,
+        c.author_gender,
+        c.author_url
+),
+
+totals AS (
+    SELECT
+        COUNT(*)::bigint
+            AS posts_count,
+
+        COALESCE(
+            SUM(bp.likes_count),
+            0
+        )::bigint
+            AS likes_count,
+
+        COALESCE(
+            SUM(bp.platform_comments_count),
+            0
+        )::bigint
+            AS platform_comments_count,
+
+        COALESCE(
+            SUM(bp.shares_count),
+            0
+        )::bigint
+            AS shares_count,
+
+        COALESCE(
+            SUM(bp.views_count),
+            0
+        )::bigint
+            AS views_count,
+
+        MIN(bp.published_at)
+            AS first_published_at,
+
+        MAX(bp.published_at)
+            AS last_published_at,
+
+        MAX(
+            COALESCE(
+                bp.metrics_last_observed_at,
+                bp.metrics_fetched_at,
+                bp.scraped_at,
+                bp.last_confirmed_at,
+                bp.matched_at
+            )
+        ) AS latest_observed_at,
+
+        COUNT(*) FILTER (
+            WHERE LOWER(
+                COALESCE(
+                    bp.post_type,
+                    ''
+                )
+            ) = 'video'
+        )::bigint
+            AS video_posts_count
+
+    FROM base_posts bp
+),
+
+comment_totals AS (
+    SELECT
+        COUNT(*)::bigint
+            AS stored_comments_count,
+
+        COUNT(
+            DISTINCT COALESCE(
+                NULLIF(
+                    BTRIM(author_id),
+                    ''
+                ),
+                NULLIF(
+                    BTRIM(author_name),
+                    ''
+                )
+            )
+        )::bigint
+            AS distinct_comment_authors
+
+    FROM matched_comments
+)
+
+SELECT
+    jsonb_build_object(
+
+        'query_id',
+        (
+            SELECT query_id
+            FROM params
+        ),
+
+        'latest_run',
+        COALESCE(
+            (
+                SELECT jsonb_build_object(
+                    'run_id',
+                    lr.run_id,
+
+                    'status',
+                    lr.status,
+
+                    'processed_count',
+                    lr.processed_count,
+
+                    'new_source_count',
+                    lr.new_source_count,
+
+                    'matched_count',
+                    lr.matched_count,
+
+                    'new_match_count',
+                    lr.new_match_count,
+
+                    'error_count',
+                    lr.error_count,
+
+                    'error_summary',
+                    lr.error_summary,
+
+                    'started_at',
+                    lr.started_at,
+
+                    'finished_at',
+                    lr.finished_at,
+
+                    'heartbeat_at',
+                    lr.heartbeat_at
+                )
+                FROM latest_run lr
+            ),
+            '{}'::jsonb
+        ),
+
+        'live',
+        jsonb_build_object(
+            'available',
+            TRUE,
+
+            'results_count',
+            (
+                SELECT posts_count
+                FROM totals
+            ),
+
+            'latest_observed_at',
+            (
+                SELECT latest_observed_at
+                FROM totals
+            )
+        ),
+
+        'what',
+        jsonb_build_object(
+            'available',
+            TRUE,
+
+            'matched_terms',
+            COALESCE(
+                (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'term',
+                            mt.term,
+
+                            'occurrences',
+                            mt.occurrences
+                        )
+                        ORDER BY
+                            mt.occurrences DESC,
+                            mt.term
+                    )
+                    FROM matched_terms mt
+                ),
+                '[]'::jsonb
+            )
+        ),
+
+        'when',
+        jsonb_build_object(
+            'available',
+            TRUE,
+
+            'first_published_at',
+            (
+                SELECT first_published_at
+                FROM totals
+            ),
+
+            'last_published_at',
+            (
+                SELECT last_published_at
+                FROM totals
+            ),
+
+            'by_day',
+            COALESCE(
+                (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'date',
+                            dc.published_day,
+
+                            'posts',
+                            dc.post_count
+                        )
+                        ORDER BY
+                            dc.published_day DESC
+                    )
+                    FROM daily_counts dc
+                ),
+                '[]'::jsonb
+            )
+        ),
+
+        'amount',
+        jsonb_build_object(
+            'available',
+            TRUE,
+
+            'posts',
+            (
+                SELECT posts_count
+                FROM totals
+            ),
+
+            'likes',
+            (
+                SELECT likes_count
+                FROM totals
+            ),
+
+            'platform_comments',
+            (
+                SELECT platform_comments_count
+                FROM totals
+            ),
+
+            'shares',
+            (
+                SELECT shares_count
+                FROM totals
+            ),
+
+            'views',
+            (
+                SELECT views_count
+                FROM totals
+            ),
+
+            'interactions',
+            (
+                SELECT
+                    likes_count +
+                    platform_comments_count +
+                    shares_count
+                FROM totals
+            ),
+
+            'average_interactions_per_post',
+            COALESCE(
+                (
+                    SELECT
+                        ROUND(
+                            (
+                                likes_count +
+                                platform_comments_count +
+                                shares_count
+                            )::numeric /
+                            NULLIF(
+                                posts_count,
+                                0
+                            ),
+                            2
+                        )
+                    FROM totals
+                ),
+                0
+            ),
+
+            'stored_comments',
+            (
+                SELECT stored_comments_count
+                FROM comment_totals
+            )
+        ),
+
+        'how',
+        jsonb_build_object(
+            'available',
+            TRUE,
+
+            'by_platform',
+            COALESCE(
+                (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'platform',
+                            pc.platform,
+
+                            'posts',
+                            pc.post_count
+                        )
+                        ORDER BY
+                            pc.post_count DESC,
+                            pc.platform
+                    )
+                    FROM platform_counts pc
+                ),
+                '[]'::jsonb
+            ),
+
+            'by_post_type',
+            COALESCE(
+                (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'post_type',
+                            pt.post_type,
+
+                            'posts',
+                            pt.post_count
+                        )
+                        ORDER BY
+                            pt.post_count DESC,
+                            pt.post_type
+                    )
+                    FROM post_type_counts pt
+                ),
+                '[]'::jsonb
+            )
+        ),
+
+        'who',
+        jsonb_build_object(
+            'available',
+            TRUE,
+
+            'source_accounts',
+            COALESCE(
+                (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'target_id',
+                            sa.target_id,
+
+                            'platform',
+                            sa.platform,
+
+                            'handle',
+                            sa.handle,
+
+                            'external_profile_id',
+                            sa.external_profile_id,
+
+                            'posts',
+                            sa.post_count,
+
+                            'likes',
+                            sa.likes_count,
+
+                            'comments',
+                            sa.comments_count,
+
+                            'shares',
+                            sa.shares_count,
+
+                            'views',
+                            sa.views_count
+                        )
+                        ORDER BY
+                            sa.post_count DESC,
+                            sa.platform,
+                            sa.handle
+                    )
+                    FROM source_accounts sa
+                ),
+                '[]'::jsonb
+            ),
+
+            'comment_authors',
+            COALESCE(
+                (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'author_id',
+                            ca.author_id,
+
+                            'author_name',
+                            ca.author_name,
+
+                            'author_gender',
+                            ca.author_gender,
+
+                            'author_url',
+                            ca.author_url,
+
+                            'comments',
+                            ca.comments_count,
+
+                            'first_comment_at',
+                            ca.first_comment_at,
+
+                            'last_comment_at',
+                            ca.last_comment_at
+                        )
+                        ORDER BY
+                            ca.comments_count DESC,
+                            ca.author_name
+                    )
+                    FROM comment_authors ca
+                ),
+                '[]'::jsonb
+            ),
+
+            'distinct_comment_authors',
+            (
+                SELECT distinct_comment_authors
+                FROM comment_totals
+            )
+        ),
+
+        'where',
+        jsonb_build_object(
+            'available',
+            FALSE,
+
+            'reason',
+            'El dataset actual no contiene geografía estructurada y verificable para estos resultados.'
+        ),
+
+        'profiles',
+        jsonb_build_object(
+            'available',
+            TRUE,
+
+            'items',
+            COALESCE(
+                (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'target_id',
+                            sa.target_id,
+
+                            'platform',
+                            sa.platform,
+
+                            'handle',
+                            sa.handle,
+
+                            'external_profile_id',
+                            sa.external_profile_id,
+
+                            'results',
+                            sa.post_count
+                        )
+                        ORDER BY
+                            sa.post_count DESC,
+                            sa.platform,
+                            sa.handle
+                    )
+                    FROM source_accounts sa
+                ),
+                '[]'::jsonb
+            )
+        ),
+
+        'botometer',
+        jsonb_build_object(
+            'available',
+            FALSE,
+
+            'reason',
+            'No existe todavía una metodología, señales persistidas y score trazable para clasificar automatización.'
+        ),
+
+        'streams',
+        jsonb_build_object(
+            'available',
+            FALSE,
+
+            'video_posts',
+            (
+                SELECT video_posts_count
+                FROM totals
+            ),
+
+            'reason',
+            'post_type = video no permite distinguir de forma fiable una transmisión en vivo de un video convencional.'
+        )
+    ) AS payload;

@@ -1,1 +1,0 @@
-SELECT * FROM public."sl_alerts" LIMIT 10;
