@@ -1,0 +1,600 @@
+WITH params AS (
+    SELECT
+        CASE
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '24h'
+                THEN INTERVAL '24 hours'
+
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '7d'
+                THEN INTERVAL '7 days'
+
+            WHEN {{ CW_Resumen.model.period || '30d' }} = '90d'
+                THEN INTERVAL '90 days'
+
+            ELSE INTERVAL '30 days'
+        END AS lookback,
+
+        {{ CW_Resumen.model.period || '30d' }}::text
+            AS period
+),
+
+session_context AS (
+    SELECT
+        u.tenant_id
+
+    FROM public.sl_users u
+
+    WHERE LOWER(u.email) =
+        LOWER(
+            NULLIF(
+                {{ appsmith.store.userEmail || '' }},
+                ''
+            )
+        )
+
+      AND u.is_active = TRUE
+
+    LIMIT 1
+),
+
+snapshots AS (
+    SELECT
+        pm.id AS metric_id,
+        pm.post_id,
+        sp.target_id,
+
+        mt.platform,
+        mt.handle,
+
+        pm.fetched_at,
+
+        COALESCE(
+            pm.likes_count,
+            0
+        )::bigint AS likes_count,
+
+        COALESCE(
+            pm.comments_count,
+            0
+        )::bigint AS comments_count,
+
+        COALESCE(
+            pm.shares_count,
+            0
+        )::bigint AS shares_count,
+
+        COALESCE(
+            pm.views_count,
+            0
+        )::bigint AS views_count,
+
+        LAG(
+            COALESCE(
+                pm.likes_count,
+                0
+            )
+        ) OVER (
+            PARTITION BY pm.post_id
+            ORDER BY
+                pm.fetched_at,
+                pm.id
+        )::bigint AS previous_likes,
+
+        LAG(
+            COALESCE(
+                pm.comments_count,
+                0
+            )
+        ) OVER (
+            PARTITION BY pm.post_id
+            ORDER BY
+                pm.fetched_at,
+                pm.id
+        )::bigint AS previous_comments,
+
+        LAG(
+            COALESCE(
+                pm.shares_count,
+                0
+            )
+        ) OVER (
+            PARTITION BY pm.post_id
+            ORDER BY
+                pm.fetched_at,
+                pm.id
+        )::bigint AS previous_shares,
+
+        LAG(
+            COALESCE(
+                pm.views_count,
+                0
+            )
+        ) OVER (
+            PARTITION BY pm.post_id
+            ORDER BY
+                pm.fetched_at,
+                pm.id
+        )::bigint AS previous_views
+
+    FROM session_context sc
+
+    INNER JOIN public.sl_social_posts sp
+        ON sp.tenant_id = sc.tenant_id
+
+    INNER JOIN public.sl_monitored_targets mt
+        ON mt.tenant_id = sp.tenant_id
+       AND mt.id = sp.target_id
+
+    INNER JOIN public.sl_post_metrics pm
+        ON pm.post_id = sp.id
+),
+
+deltas AS (
+    SELECT
+        s.*,
+
+        (
+            s.likes_count -
+            s.previous_likes
+        )::bigint AS likes_delta,
+
+        (
+            s.comments_count -
+            s.previous_comments
+        )::bigint AS comments_delta,
+
+        (
+            s.shares_count -
+            s.previous_shares
+        )::bigint AS shares_delta,
+
+        (
+            s.views_count -
+            s.previous_views
+        )::bigint AS views_delta,
+
+        (
+            (
+                s.likes_count -
+                s.previous_likes
+            ) +
+            (
+                s.comments_count -
+                s.previous_comments
+            ) +
+            (
+                s.shares_count -
+                s.previous_shares
+            )
+        )::bigint AS interactions_delta
+
+    FROM snapshots s
+
+    WHERE s.previous_likes IS NOT NULL
+      AND s.previous_comments IS NOT NULL
+      AND s.previous_shares IS NOT NULL
+      AND s.previous_views IS NOT NULL
+),
+
+period_deltas AS (
+    SELECT
+        d.*
+
+    FROM deltas d
+
+    CROSS JOIN params p
+
+    WHERE d.fetched_at >=
+        CURRENT_TIMESTAMP -
+        p.lookback
+),
+
+calendar AS (
+    SELECT
+        gs AS bucket_at
+
+    FROM params p
+
+    CROSS JOIN LATERAL generate_series(
+
+        CASE
+            WHEN p.period = '24h'
+                THEN date_trunc(
+                    'hour',
+                    (
+                        CURRENT_TIMESTAMP -
+                        p.lookback
+                    )
+                    AT TIME ZONE
+                    'America/Mexico_City'
+                )
+
+            ELSE date_trunc(
+                'day',
+                (
+                    CURRENT_TIMESTAMP -
+                    p.lookback
+                )
+                AT TIME ZONE
+                'America/Mexico_City'
+            )
+        END,
+
+        CASE
+            WHEN p.period = '24h'
+                THEN date_trunc(
+                    'hour',
+                    CURRENT_TIMESTAMP
+                    AT TIME ZONE
+                    'America/Mexico_City'
+                )
+
+            ELSE date_trunc(
+                'day',
+                CURRENT_TIMESTAMP
+                AT TIME ZONE
+                'America/Mexico_City'
+            )
+        END,
+
+        CASE
+            WHEN p.period = '24h'
+                THEN INTERVAL '1 hour'
+
+            ELSE INTERVAL '1 day'
+        END
+
+    ) AS gs
+),
+
+bucketed AS (
+    SELECT
+        CASE
+            WHEN p.period = '24h'
+                THEN date_trunc(
+                    'hour',
+                    pd.fetched_at
+                    AT TIME ZONE
+                    'America/Mexico_City'
+                )
+
+            ELSE date_trunc(
+                'day',
+                pd.fetched_at
+                AT TIME ZONE
+                'America/Mexico_City'
+            )
+        END AS bucket_at,
+
+        COUNT(*)::integer
+            AS snapshots,
+
+        COUNT(
+            DISTINCT pd.post_id
+        )::integer AS posts_updated,
+
+        SUM(
+            pd.likes_delta
+        )::bigint AS likes_delta,
+
+        SUM(
+            pd.comments_delta
+        )::bigint AS comments_delta,
+
+        SUM(
+            pd.shares_delta
+        )::bigint AS shares_delta,
+
+        SUM(
+            pd.views_delta
+        )::bigint AS views_delta,
+
+        SUM(
+            pd.interactions_delta
+        )::bigint AS interactions_delta,
+
+        SUM(
+            GREATEST(
+                pd.likes_delta,
+                0
+            )
+        )::bigint AS likes_gained,
+
+        SUM(
+            GREATEST(
+                pd.comments_delta,
+                0
+            )
+        )::bigint AS comments_gained,
+
+        SUM(
+            GREATEST(
+                pd.shares_delta,
+                0
+            )
+        )::bigint AS shares_gained,
+
+        SUM(
+            GREATEST(
+                pd.views_delta,
+                0
+            )
+        )::bigint AS views_gained,
+
+        SUM(
+            GREATEST(
+                pd.interactions_delta,
+                0
+            )
+        )::bigint AS interactions_gained,
+
+        COUNT(*) FILTER (
+            WHERE pd.likes_delta < 0
+               OR pd.comments_delta < 0
+               OR pd.shares_delta < 0
+               OR pd.views_delta < 0
+        )::integer AS decrease_events
+
+    FROM period_deltas pd
+
+    CROSS JOIN params p
+
+    GROUP BY
+        CASE
+            WHEN p.period = '24h'
+                THEN date_trunc(
+                    'hour',
+                    pd.fetched_at
+                    AT TIME ZONE
+                    'America/Mexico_City'
+                )
+
+            ELSE date_trunc(
+                'day',
+                pd.fetched_at
+                AT TIME ZONE
+                'America/Mexico_City'
+            )
+        END
+),
+
+timeline AS (
+    SELECT
+        c.bucket_at,
+
+        COALESCE(
+            b.snapshots,
+            0
+        )::integer AS snapshots,
+
+        COALESCE(
+            b.posts_updated,
+            0
+        )::integer AS posts_updated,
+
+        COALESCE(
+            b.likes_delta,
+            0
+        )::bigint AS likes_delta,
+
+        COALESCE(
+            b.comments_delta,
+            0
+        )::bigint AS comments_delta,
+
+        COALESCE(
+            b.shares_delta,
+            0
+        )::bigint AS shares_delta,
+
+        COALESCE(
+            b.views_delta,
+            0
+        )::bigint AS views_delta,
+
+        COALESCE(
+            b.interactions_delta,
+            0
+        )::bigint AS interactions_delta,
+
+        COALESCE(
+            b.likes_gained,
+            0
+        )::bigint AS likes_gained,
+
+        COALESCE(
+            b.comments_gained,
+            0
+        )::bigint AS comments_gained,
+
+        COALESCE(
+            b.shares_gained,
+            0
+        )::bigint AS shares_gained,
+
+        COALESCE(
+            b.views_gained,
+            0
+        )::bigint AS views_gained,
+
+        COALESCE(
+            b.interactions_gained,
+            0
+        )::bigint AS interactions_gained,
+
+        COALESCE(
+            b.decrease_events,
+            0
+        )::integer AS decrease_events
+
+    FROM calendar c
+
+    LEFT JOIN bucketed b
+        ON b.bucket_at = c.bucket_at
+
+    ORDER BY
+        c.bucket_at
+)
+
+SELECT
+    p.period,
+
+    CASE
+        WHEN p.period = '24h'
+            THEN 'hour'
+
+        ELSE 'day'
+    END AS granularity,
+
+    (
+        SELECT COUNT(*)::integer
+        FROM period_deltas
+    ) AS snapshot_changes,
+
+    (
+        SELECT COUNT(
+            DISTINCT post_id
+        )::integer
+        FROM period_deltas
+    ) AS posts_with_observed_change,
+
+    COALESCE(
+        (
+            SELECT SUM(
+                likes_delta
+            )
+            FROM period_deltas
+        ),
+        0
+    )::bigint AS net_likes_change,
+
+    COALESCE(
+        (
+            SELECT SUM(
+                comments_delta
+            )
+            FROM period_deltas
+        ),
+        0
+    )::bigint AS net_comments_change,
+
+    COALESCE(
+        (
+            SELECT SUM(
+                shares_delta
+            )
+            FROM period_deltas
+        ),
+        0
+    )::bigint AS net_shares_change,
+
+    COALESCE(
+        (
+            SELECT SUM(
+                views_delta
+            )
+            FROM period_deltas
+        ),
+        0
+    )::bigint AS net_views_change,
+
+    COALESCE(
+        (
+            SELECT SUM(
+                interactions_delta
+            )
+            FROM period_deltas
+        ),
+        0
+    )::bigint AS net_interactions_change,
+
+    COALESCE(
+        (
+            SELECT SUM(
+                GREATEST(
+                    interactions_delta,
+                    0
+                )
+            )
+            FROM period_deltas
+        ),
+        0
+    )::bigint AS interactions_gained,
+
+    (
+        SELECT COUNT(*)::integer
+
+        FROM period_deltas
+
+        WHERE likes_delta < 0
+           OR comments_delta < 0
+           OR shares_delta < 0
+           OR views_delta < 0
+    ) AS decrease_events,
+
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'bucket',
+                    CASE
+                        WHEN p.period = '24h'
+                            THEN TO_CHAR(
+                                t.bucket_at,
+                                'YYYY-MM-DD HH24:00'
+                            )
+
+                        ELSE TO_CHAR(
+                            t.bucket_at,
+                            'YYYY-MM-DD'
+                        )
+                    END,
+
+                    'snapshots',
+                    t.snapshots,
+
+                    'posts_updated',
+                    t.posts_updated,
+
+                    'likes_delta',
+                    t.likes_delta,
+
+                    'comments_delta',
+                    t.comments_delta,
+
+                    'shares_delta',
+                    t.shares_delta,
+
+                    'views_delta',
+                    t.views_delta,
+
+                    'interactions_delta',
+                    t.interactions_delta,
+
+                    'likes_gained',
+                    t.likes_gained,
+
+                    'comments_gained',
+                    t.comments_gained,
+
+                    'shares_gained',
+                    t.shares_gained,
+
+                    'views_gained',
+                    t.views_gained,
+
+                    'interactions_gained',
+                    t.interactions_gained,
+
+                    'decrease_events',
+                    t.decrease_events
+                )
+                ORDER BY
+                    t.bucket_at
+            )
+
+            FROM timeline t
+        ),
+        '[]'::jsonb
+    ) AS timeline
+
+FROM params p;
