@@ -1,0 +1,20 @@
+SELECT
+    r.id AS run_id,
+    r.query_id,
+    q.name,
+    q.formula_text,
+    r.status,
+    r.definition_hash,
+    r.processed_count,
+    r.matched_count,
+    r.new_match_count,
+    r.error_count,
+    r.started_at,
+    r.finished_at
+FROM public.sl_query_runs r
+JOIN public.sl_queries q
+    ON q.tenant_id = r.tenant_id
+   AND q.id = r.query_id
+WHERE r.query_id = 'c2685358-5905-4f0e-9279-240351a99a26'::uuid
+ORDER BY r.started_at DESC
+LIMIT 1;

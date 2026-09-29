@@ -1,28 +1,8 @@
-SELECT
-    sp.id,
-    sp.target_id,
-    mt.platform,
-    mt.handle,
-    sp.external_post_id,
-    sp.content_text,
-    sp.published_at,
-    sp.scraped_at
-FROM public.sl_social_posts sp
-
-INNER JOIN public.sl_monitored_targets mt
-    ON mt.id = sp.target_id
-   AND mt.tenant_id = sp.tenant_id
-
-INNER JOIN public.sl_users u
-    ON u.tenant_id = sp.tenant_id
-
-WHERE lower(u.email) =
-      lower({{ appsmith.store.userEmail }})
-
-  AND u.is_active = TRUE
-
-ORDER BY
-    sp.scraped_at DESC NULLS LAST,
-    sp.published_at DESC NULLS LAST
-
-LIMIT 20;
+DELETE FROM public.sl_query_runs
+WHERE id = '51e12dfa-721a-47ba-afe0-14772cce2bb0'::uuid
+  AND status = 'running'
+RETURNING
+    id,
+    query_id,
+    status,
+    started_at;

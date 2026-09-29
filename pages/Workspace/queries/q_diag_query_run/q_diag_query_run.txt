@@ -1,0 +1,148 @@
+WITH params AS (
+    SELECT
+        'c2685358-5905-4f0e-9279-240351a99a26'::uuid AS query_id,
+        'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid AS expected_tenant_id
+),
+
+latest_run AS (
+    SELECT r.*
+    FROM public.sl_query_runs r
+    CROSS JOIN params p
+    WHERE r.query_id = p.query_id
+    ORDER BY r.created_at DESC
+    LIMIT 1
+),
+
+relation_rows AS (
+    SELECT
+        qsp.tenant_id AS relation_tenant_id,
+        qsp.query_id,
+        qsp.post_id,
+        qsp.is_active,
+        sp.id AS resolved_post_id,
+        sp.tenant_id AS post_tenant_id,
+        sp.target_id,
+        mt.id AS resolved_target_id,
+        mt.tenant_id AS target_tenant_id,
+        mt.platform,
+        mt.handle
+    FROM public.sl_query_social_posts qsp
+    CROSS JOIN params p
+    LEFT JOIN public.sl_social_posts sp
+        ON sp.id = qsp.post_id
+    LEFT JOIN public.sl_monitored_targets mt
+        ON mt.id = sp.target_id
+    WHERE qsp.query_id = p.query_id
+),
+
+relation_summary AS (
+    SELECT
+        COUNT(*) AS total_relations,
+
+        COUNT(*) FILTER (
+            WHERE is_active = TRUE
+        ) AS active_relations,
+
+        COUNT(*) FILTER (
+            WHERE resolved_post_id IS NOT NULL
+        ) AS relations_resolved_to_social_posts,
+
+        COUNT(*) FILTER (
+            WHERE resolved_post_id IS NULL
+        ) AS orphan_post_relations,
+
+        COUNT(*) FILTER (
+            WHERE relation_tenant_id IS DISTINCT FROM
+                  (SELECT expected_tenant_id FROM params)
+        ) AS relation_wrong_tenant_count,
+
+        COUNT(*) FILTER (
+            WHERE resolved_post_id IS NOT NULL
+              AND post_tenant_id IS DISTINCT FROM relation_tenant_id
+        ) AS post_tenant_mismatch_count,
+
+        COUNT(*) FILTER (
+            WHERE resolved_target_id IS NOT NULL
+              AND target_tenant_id IS DISTINCT FROM post_tenant_id
+        ) AS target_tenant_mismatch_count,
+
+        COUNT(*) FILTER (
+            WHERE resolved_post_id IS NOT NULL
+              AND resolved_target_id IS NULL
+        ) AS orphan_target_relations
+
+    FROM relation_rows
+),
+
+distribution AS (
+    SELECT
+        target_id,
+        platform,
+        handle,
+        COUNT(*) AS total_relations,
+        COUNT(*) FILTER (
+            WHERE is_active = TRUE
+        ) AS active_relations,
+        COUNT(*) FILTER (
+            WHERE resolved_post_id IS NOT NULL
+        ) AS resolved_posts,
+        COUNT(*) FILTER (
+            WHERE resolved_post_id IS NULL
+        ) AS orphan_relations
+    FROM relation_rows
+    GROUP BY
+        target_id,
+        platform,
+        handle
+)
+
+SELECT
+    lr.id AS run_id,
+    lr.tenant_id AS run_tenant_id,
+    (
+        lr.tenant_id =
+        (SELECT expected_tenant_id FROM params)
+    ) AS run_tenant_is_expected,
+
+    lr.status,
+    lr.processed_count,
+    lr.new_source_count,
+    lr.matched_count,
+    lr.new_match_count,
+    lr.error_count,
+    lr.error_summary,
+    lr.started_at,
+    lr.finished_at,
+
+    rs.total_relations,
+    rs.active_relations,
+    rs.relations_resolved_to_social_posts,
+    rs.orphan_post_relations,
+    rs.relation_wrong_tenant_count,
+    rs.post_tenant_mismatch_count,
+    rs.target_tenant_mismatch_count,
+    rs.orphan_target_relations,
+
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'target_id', d.target_id,
+                    'platform', d.platform,
+                    'handle', d.handle,
+                    'total_relations', d.total_relations,
+                    'active_relations', d.active_relations,
+                    'resolved_posts', d.resolved_posts,
+                    'orphan_relations', d.orphan_relations
+                )
+                ORDER BY d.platform, d.handle
+            )
+            FROM distribution d
+        ),
+        '[]'::jsonb
+    ) AS matches_by_target_platform
+
+FROM (SELECT 1) base
+LEFT JOIN latest_run lr
+    ON TRUE
+CROSS JOIN relation_summary rs;

@@ -1,0 +1,91 @@
+WITH auth_ctx AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE LOWER(u.email) = LOWER({{ appsmith.store.userEmail }})
+      AND u.is_active = TRUE
+    LIMIT 1
+)
+
+SELECT
+    qsp.id AS query_social_post_id,
+    qsp.query_id,
+    qsp.post_id,
+    qsp.first_matched_run_id,
+    qsp.last_confirmed_run_id,
+    qsp.matched_at,
+    qsp.last_confirmed_at,
+    qsp.match_type,
+    qsp.match_details,
+    qsp.definition_hash,
+
+    sp.target_id,
+    sp.external_post_id,
+    sp.content_text,
+    sp.published_at,
+    sp.scraped_at,
+    sp.post_url,
+    sp.post_type,
+
+    mt.platform,
+    mt.handle,
+    mt.external_profile_id,
+
+    COALESCE(metrics.likes_count, 0) AS likes_count,
+    COALESCE(metrics.comments_count, 0) AS platform_comments_count,
+    COALESCE(metrics.shares_count, 0) AS shares_count,
+    COALESCE(metrics.views_count, 0) AS views_count,
+    metrics.fetched_at AS metrics_fetched_at,
+    metrics.last_observed_at AS metrics_last_observed_at,
+
+    COALESCE(comments.stored_comments_count, 0) AS stored_comments_count
+
+FROM auth_ctx a
+
+JOIN public.sl_query_social_posts qsp
+    ON qsp.tenant_id = a.tenant_id
+   AND qsp.is_active = TRUE
+
+JOIN public.sl_social_posts sp
+    ON sp.id = qsp.post_id
+   AND sp.tenant_id = qsp.tenant_id
+
+JOIN public.sl_monitored_targets mt
+    ON mt.id = sp.target_id
+   AND mt.tenant_id = qsp.tenant_id
+
+LEFT JOIN LATERAL (
+    SELECT
+        m.likes_count,
+        m.comments_count,
+        m.shares_count,
+        m.views_count,
+        m.fetched_at,
+        m.last_observed_at
+    FROM public.sl_post_metrics m
+    WHERE m.tenant_id = qsp.tenant_id
+      AND m.post_id = sp.id
+    ORDER BY
+        m.last_observed_at DESC NULLS LAST,
+        m.fetched_at DESC
+    LIMIT 1
+) metrics
+    ON TRUE
+
+LEFT JOIN LATERAL (
+    SELECT
+        COUNT(*)::bigint AS stored_comments_count
+    FROM public.sl_comments c
+    WHERE c.tenant_id = qsp.tenant_id
+      AND c.post_id = sp.id
+) comments
+    ON TRUE
+
+WHERE qsp.query_id =
+    {{ CW_Constructor.model.selectedQueryId || CW_Constructor.model.activeQueryId }}::uuid
+
+ORDER BY
+    sp.published_at DESC NULLS LAST,
+    sp.scraped_at DESC
+
+LIMIT 100;

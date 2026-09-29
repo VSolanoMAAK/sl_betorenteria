@@ -1,11 +1,11 @@
 {
-  "gitSyncId": "6a9b555e277a9d17c2bbaffc_c74c158e-e828-438d-b0f6-1afa5f223736",
-  "id": "Workspace_Query1",
+  "gitSyncId": "6a9b555e277a9d17c2bbaffc_56c5fc95-d6b4-4cba-ae50-6f745aa648d6",
+  "id": "Workspace_Query2",
   "pluginId": "postgres-plugin",
   "pluginType": "DB",
   "unpublishedAction": {
     "actionConfiguration": {
-      "body": "DELETE FROM public.sl_query_runs\nWHERE id = '51e12dfa-721a-47ba-afe0-14772cce2bb0'::uuid\n  AND status = 'running'\nRETURNING\n    id,\n    query_id,\n    status,\n    started_at;",
+      "body": "SELECT * FROM public.\"sl_alerts\" LIMIT 10;",
       "encodeParamsToggle": true,
       "paginationType": "NONE",
       "pluginSpecifiedTemplates": [
@@ -22,8 +22,7 @@
       "name": "SL_Listening",
       "pluginId": "postgres-plugin"
     },
-    "dynamicBindingPathList": [],
-    "name": "Query1",
+    "name": "Query2",
     "pageId": "Workspace",
     "runBehaviour": "MANUAL",
     "userSetOnLoad": false
