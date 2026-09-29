@@ -4,39 +4,27 @@
       new Intl.DateTimeFormat(
         'en-US',
         {
-          timeZone:
-            'America/Mexico_City',
-          year:
-            'numeric',
-          month:
-            '2-digit',
-          day:
-            '2-digit'
+          timeZone: 'America/Mexico_City',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
         }
-      ).formatToParts(
-        new Date()
-      );
+      ).formatToParts(new Date());
 
     const values = {};
 
-    parts.forEach(
-      function (part) {
-        values[
-          part.type
-        ] =
-          part.value;
-      }
-    );
+    parts.forEach(function (part) {
+      values[part.type] = part.value;
+    });
 
     const today =
-      values.year +
-      '-' +
-      values.month +
-      '-' +
+      values.year + '-' +
+      values.month + '-' +
       values.day;
 
     return {
       queryId:
+        appsmith.store.selectedQueryId ||
         appsmith.store.activeQueryId ||
         "",
 

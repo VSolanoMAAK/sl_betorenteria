@@ -1,0 +1,132 @@
+WITH user_ctx AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) =
+          lower({{ appsmith.store.userEmail }})
+      AND u.is_active = TRUE
+    LIMIT 1
+),
+
+request_ctx AS (
+    SELECT
+        NULLIF(
+            btrim(
+                {{
+                    CW_Workspace.model.selectedQueryId ||
+                    CW_Constructor.model.selectedQueryId ||
+                    appsmith.store.selectedQueryId ||
+                    appsmith.store.activeQueryId ||
+                    ''
+                }}::text
+            ),
+            ''
+        )::uuid AS query_id
+),
+
+selected_query AS (
+    SELECT
+        q.id,
+        q.tenant_id,
+        q.name,
+        q.formula_text,
+        q.use_web
+    FROM public.sl_queries q
+
+    INNER JOIN user_ctx u
+        ON u.tenant_id = q.tenant_id
+
+    CROSS JOIN request_ctx r
+
+    WHERE q.id = r.query_id
+),
+
+query_targets AS (
+    SELECT
+        qt.query_id,
+        qt.target_id,
+        mt.platform,
+        mt.handle
+    FROM public.sl_query_targets qt
+
+    INNER JOIN selected_query sq
+        ON sq.id = qt.query_id
+       AND sq.tenant_id = qt.tenant_id
+
+    INNER JOIN public.sl_monitored_targets mt
+        ON mt.id = qt.target_id
+       AND mt.tenant_id = qt.tenant_id
+),
+
+query_terms AS (
+    SELECT
+        qg.query_id,
+        qg.group_no,
+        qt.operator,
+        qt.term
+    FROM public.sl_query_groups qg
+
+    INNER JOIN selected_query sq
+        ON sq.id = qg.query_id
+       AND sq.tenant_id = qg.tenant_id
+
+    INNER JOIN public.sl_query_terms qt
+        ON qt.group_id = qg.id
+       AND qt.tenant_id = qg.tenant_id
+)
+
+SELECT
+    sq.id AS query_id,
+    sq.name AS query_name,
+    sq.formula_text,
+    sq.use_web,
+
+    trg.target_id,
+    trg.platform,
+    trg.handle,
+
+    trm.group_no,
+    trm.operator,
+    trm.term,
+
+    (
+        SELECT COUNT(*)
+        FROM public.sl_social_posts sp
+        WHERE sp.tenant_id = sq.tenant_id
+          AND sp.target_id = trg.target_id
+    )::integer AS posts_in_target,
+
+    (
+        SELECT COUNT(*)
+        FROM public.sl_social_posts sp
+        WHERE sp.tenant_id = sq.tenant_id
+          AND sp.target_id = trg.target_id
+          AND strpos(
+              lower(
+                  COALESCE(
+                      sp.content_text,
+                      ''
+                  )
+              ),
+              lower(
+                  btrim(
+                      trm.term
+                  )
+              )
+          ) > 0
+    )::integer AS posts_matching_term
+
+FROM selected_query sq
+
+LEFT JOIN query_targets trg
+    ON trg.query_id = sq.id
+
+LEFT JOIN query_terms trm
+    ON trm.query_id = sq.id
+
+ORDER BY
+    trg.platform,
+    trg.handle,
+    trm.group_no,
+    trm.operator,
+    trm.term;

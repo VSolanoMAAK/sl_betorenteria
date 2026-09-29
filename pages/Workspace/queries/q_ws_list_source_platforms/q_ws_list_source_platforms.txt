@@ -1,0 +1,24 @@
+SELECT
+    p.code,
+    p.display_name,
+    p.category,
+    p.is_active,
+
+    CASE
+        WHEN p.code IN (
+            'instagram',
+            'tiktok',
+            'facebook',
+            'x',
+            'threads'
+        )
+        THEN TRUE
+        ELSE FALSE
+    END AS mvp_supported
+
+FROM public.sl_platforms p
+
+ORDER BY
+    p.category,
+    p.display_name,
+    p.code;

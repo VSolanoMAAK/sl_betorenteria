@@ -1,0 +1,63 @@
+WITH current_tenant AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) =
+          lower({{ appsmith.store.userEmail || '' }})
+      AND u.is_active = TRUE
+    LIMIT 1
+),
+
+input_source AS (
+    SELECT
+        CASE
+            WHEN trim({{ this.params.id || '' }}) ~*
+                 '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+            THEN trim({{ this.params.id || '' }})::uuid
+            ELSE NULL::uuid
+        END AS id
+),
+
+updated AS (
+    UPDATE public.sl_monitored_targets t
+
+    SET status =
+        CASE
+            WHEN t.status = 'active'
+                THEN 'inactive'
+            WHEN t.status = 'inactive'
+                THEN 'active'
+            ELSE t.status
+        END
+
+    FROM current_tenant ct,
+         input_source i
+
+    WHERE t.id = i.id
+      AND t.tenant_id = ct.tenant_id
+      AND t.status IN (
+          'active',
+          'inactive'
+      )
+
+    RETURNING
+        t.id,
+        t.platform,
+        t.external_profile_id,
+        t.handle,
+        t.status,
+        t.is_competitor,
+        t.created_at
+)
+
+SELECT
+    u.id,
+    u.platform,
+    u.external_profile_id,
+    u.handle,
+    u.status,
+    u.is_competitor,
+    u.created_at,
+    TRUE AS updated
+
+FROM updated u;

@@ -5,7 +5,7 @@
   "pluginType": "DB",
   "unpublishedAction": {
     "actionConfiguration": {
-      "body": "SELECT\n    COUNT(*)::integer AS total_rows,\n    COUNT(DISTINCT source_url)::integer AS distinct_urls,\n    (\n        COUNT(*) -\n        COUNT(DISTINCT source_url)\n    )::integer AS duplicate_rows\nFROM public.sl_web_mentions\nWHERE keyword_id = '116985c8-5bb5-4724-ade7-e5705f06b414';",
+      "body": "SELECT\n    sp.id,\n    sp.target_id,\n    mt.platform,\n    mt.handle,\n    sp.external_post_id,\n    sp.content_text,\n    sp.published_at,\n    sp.scraped_at\nFROM public.sl_social_posts sp\n\nINNER JOIN public.sl_monitored_targets mt\n    ON mt.id = sp.target_id\n   AND mt.tenant_id = sp.tenant_id\n\nINNER JOIN public.sl_users u\n    ON u.tenant_id = sp.tenant_id\n\nWHERE lower(u.email) =\n      lower({{ appsmith.store.userEmail }})\n\n  AND u.is_active = TRUE\n\nORDER BY\n    sp.scraped_at DESC NULLS LAST,\n    sp.published_at DESC NULLS LAST\n\nLIMIT 20;",
       "encodeParamsToggle": true,
       "paginationType": "NONE",
       "pluginSpecifiedTemplates": [
@@ -22,7 +22,11 @@
       "name": "SL_Listening",
       "pluginId": "postgres-plugin"
     },
-    "dynamicBindingPathList": [],
+    "dynamicBindingPathList": [
+      {
+        "key": "body"
+      }
+    ],
     "name": "Query1",
     "pageId": "Workspace",
     "runBehaviour": "MANUAL",

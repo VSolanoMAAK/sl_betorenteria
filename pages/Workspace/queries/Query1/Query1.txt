@@ -1,9 +1,28 @@
 SELECT
-    COUNT(*)::integer AS total_rows,
-    COUNT(DISTINCT source_url)::integer AS distinct_urls,
-    (
-        COUNT(*) -
-        COUNT(DISTINCT source_url)
-    )::integer AS duplicate_rows
-FROM public.sl_web_mentions
-WHERE keyword_id = '116985c8-5bb5-4724-ade7-e5705f06b414';
+    sp.id,
+    sp.target_id,
+    mt.platform,
+    mt.handle,
+    sp.external_post_id,
+    sp.content_text,
+    sp.published_at,
+    sp.scraped_at
+FROM public.sl_social_posts sp
+
+INNER JOIN public.sl_monitored_targets mt
+    ON mt.id = sp.target_id
+   AND mt.tenant_id = sp.tenant_id
+
+INNER JOIN public.sl_users u
+    ON u.tenant_id = sp.tenant_id
+
+WHERE lower(u.email) =
+      lower({{ appsmith.store.userEmail }})
+
+  AND u.is_active = TRUE
+
+ORDER BY
+    sp.scraped_at DESC NULLS LAST,
+    sp.published_at DESC NULLS LAST
+
+LIMIT 20;

@@ -1,0 +1,57 @@
+SELECT
+    q.id AS query_id,
+    q.name AS query_name,
+
+    wm.id AS mention_id,
+
+    wk.id AS keyword_id,
+    wk.phrase,
+
+    wm.title,
+    wm.snippet,
+
+    wm.source_name,
+    wm.source_domain,
+    wm.source_url,
+
+    wm.published_at,
+    wm.detected_at
+
+FROM public.sl_users u
+
+INNER JOIN public.sl_queries q
+    ON q.tenant_id = u.tenant_id
+
+INNER JOIN public.sl_query_web_mentions qwm
+    ON qwm.tenant_id = q.tenant_id
+   AND qwm.query_id = q.id
+
+INNER JOIN public.sl_web_mentions wm
+    ON wm.tenant_id = qwm.tenant_id
+   AND wm.id = qwm.mention_id
+
+INNER JOIN public.sl_web_keywords wk
+    ON wk.id = wm.keyword_id
+   AND wk.tenant_id = wm.tenant_id
+
+WHERE lower(u.email) =
+      lower({{ appsmith.store.userEmail || "" }})
+
+  AND u.is_active = TRUE
+
+  AND q.id =
+      NULLIF(
+          {{
+            appsmith.store.selectedQueryId ||
+            appsmith.store.activeQueryId ||
+            ""
+          }},
+          ''
+      )::uuid
+
+ORDER BY
+    COALESCE(
+        wm.published_at,
+        wm.detected_at
+    ) DESC,
+    wm.id;

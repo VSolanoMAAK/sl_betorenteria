@@ -1,0 +1,116 @@
+WITH current_tenant AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) =
+          lower({{ appsmith.store.userEmail || '' }})
+      AND u.is_active = TRUE
+    LIMIT 1
+),
+
+filtered_sources AS (
+    SELECT
+        t.id,
+        t.tenant_id,
+        t.platform,
+
+        COALESCE(
+            p.display_name,
+            t.platform
+        ) AS platform_name,
+
+        p.category AS platform_category,
+        COALESCE(
+            p.is_active,
+            FALSE
+        ) AS platform_is_active,
+
+        t.external_profile_id,
+        t.handle,
+        t.status,
+        t.is_competitor,
+        t.created_at
+
+    FROM public.sl_monitored_targets t
+
+    INNER JOIN current_tenant ct
+        ON ct.tenant_id = t.tenant_id
+
+    LEFT JOIN public.sl_platforms p
+        ON p.code = t.platform
+
+    WHERE
+        (
+            {{ this.params.search || '' }} = ''
+            OR COALESCE(t.handle, '') ILIKE
+               '%' || {{ this.params.search || '' }} || '%'
+            OR COALESCE(t.external_profile_id, '') ILIKE
+               '%' || {{ this.params.search || '' }} || '%'
+            OR COALESCE(p.display_name, t.platform, '') ILIKE
+               '%' || {{ this.params.search || '' }} || '%'
+        )
+
+        AND (
+            {{ this.params.platform || '' }} = ''
+            OR t.platform =
+               {{ this.params.platform || '' }}
+        )
+
+        AND (
+            {{ this.params.status || '' }} = ''
+            OR t.status =
+               {{ this.params.status || '' }}
+        )
+)
+
+SELECT
+    fs.id,
+    fs.platform,
+    fs.platform_name,
+    fs.platform_category,
+    fs.platform_is_active,
+    fs.external_profile_id,
+    fs.handle,
+    fs.status,
+    fs.is_competitor,
+
+    fs.created_at,
+
+    to_char(
+        fs.created_at,
+        'DD/MM/YYYY'
+    ) AS created_fmt,
+
+    COUNT(*) OVER () AS total_count
+
+FROM filtered_sources fs
+
+ORDER BY
+    fs.created_at DESC,
+    fs.id DESC
+
+LIMIT
+    {{ Math.min(
+        Math.max(
+            Number(this.params.page_size || 25),
+            1
+        ),
+        100
+    ) }}
+
+OFFSET
+    {{
+        (
+            Math.max(
+                Number(this.params.page || 1),
+                1
+            ) - 1
+        ) *
+        Math.min(
+            Math.max(
+                Number(this.params.page_size || 25),
+                1
+            ),
+            100
+        )
+    }};

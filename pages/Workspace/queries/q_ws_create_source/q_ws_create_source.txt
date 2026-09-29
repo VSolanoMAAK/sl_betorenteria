@@ -1,0 +1,82 @@
+WITH current_tenant AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) =
+          lower({{ appsmith.store.userEmail || '' }})
+      AND u.is_active = TRUE
+    LIMIT 1
+),
+
+eligible_platform AS (
+    SELECT
+        p.code
+    FROM public.sl_platforms p
+    WHERE p.code =
+          {{ this.params.platform || '' }}
+      AND p.is_active = TRUE
+),
+
+inserted AS (
+    INSERT INTO public.sl_monitored_targets (
+        tenant_id,
+        platform,
+        external_profile_id,
+        handle,
+        status,
+        is_competitor
+    )
+
+    SELECT
+        ct.tenant_id,
+        ep.code,
+        trim(
+            {{ this.params.external_profile_id || '' }}
+        ),
+        trim(
+            {{ this.params.handle || '' }}
+        ),
+        'active',
+        FALSE
+
+    FROM current_tenant ct
+    CROSS JOIN eligible_platform ep
+
+    WHERE trim(
+        {{ this.params.external_profile_id || '' }}
+    ) <> ''
+
+      AND trim(
+        {{ this.params.handle || '' }}
+    ) <> ''
+
+    ON CONFLICT (
+        tenant_id,
+        platform,
+        external_profile_id
+    )
+    DO NOTHING
+
+    RETURNING
+        id,
+        tenant_id,
+        platform,
+        external_profile_id,
+        handle,
+        status,
+        is_competitor,
+        created_at
+)
+
+SELECT
+    i.id,
+    i.tenant_id,
+    i.platform,
+    i.external_profile_id,
+    i.handle,
+    i.status,
+    i.is_competitor,
+    i.created_at,
+    TRUE AS created
+
+FROM inserted i;

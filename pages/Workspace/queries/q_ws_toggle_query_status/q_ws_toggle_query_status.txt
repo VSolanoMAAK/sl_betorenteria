@@ -1,0 +1,50 @@
+WITH authorized_user AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) =
+          lower({{ appsmith.store.userEmail || "" }})
+      AND u.is_active = TRUE
+),
+
+updated_query AS (
+    UPDATE public.sl_queries q
+    SET
+        status =
+            CASE
+                WHEN q.status = 'active'
+                    THEN 'inactive'
+                ELSE 'active'
+            END,
+
+        updated_at =
+            CURRENT_TIMESTAMP
+
+    FROM authorized_user au
+
+    WHERE q.tenant_id = au.tenant_id
+
+      AND q.id =
+          NULLIF(
+              {{ appsmith.store.selectedQueryId || "" }},
+              ''
+          )::uuid
+
+      AND q.status IN (
+          'active',
+          'inactive'
+      )
+
+    RETURNING
+        q.id,
+        q.name,
+        q.status,
+        q.updated_at
+)
+
+SELECT
+    id,
+    name,
+    status,
+    updated_at
+FROM updated_query;
