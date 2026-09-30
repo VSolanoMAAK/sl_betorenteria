@@ -1,8 +1,37 @@
-DELETE FROM public.sl_query_runs
-WHERE id = '51e12dfa-721a-47ba-afe0-14772cce2bb0'::uuid
-  AND status = 'running'
-RETURNING
-    id,
-    query_id,
-    status,
-    started_at;
+SELECT
+    'COLUMN' AS object_type,
+    c.column_name AS object_name,
+    c.data_type AS detail
+FROM information_schema.columns c
+WHERE c.table_schema = 'public'
+  AND c.table_name = 'sl_comments'
+  AND c.column_name IN (
+      'parent_comment_id',
+      'replies_backfill_cursor',
+      'replies_backfill_completed_at'
+  )
+
+UNION ALL
+
+SELECT
+    'CONSTRAINT' AS object_type,
+    con.conname AS object_name,
+    pg_get_constraintdef(con.oid) AS detail
+FROM pg_constraint con
+WHERE con.conrelid = 'public.sl_comments'::regclass
+  AND con.conname = 'sl_comments_parent_comment_id_fkey'
+
+UNION ALL
+
+SELECT
+    'INDEX' AS object_type,
+    indexname AS object_name,
+    indexdef AS detail
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND tablename = 'sl_comments'
+  AND indexname = 'sl_comments_parent_comment_id_idx'
+
+ORDER BY
+    object_type,
+    object_name;
