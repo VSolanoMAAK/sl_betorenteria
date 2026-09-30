@@ -5,7 +5,7 @@
   "pluginType": "DB",
   "unpublishedAction": {
     "actionConfiguration": {
-      "body": "SELECT\n    'COLUMN' AS object_type,\n    c.column_name AS object_name,\n    c.data_type AS detail\nFROM information_schema.columns c\nWHERE c.table_schema = 'public'\n  AND c.table_name = 'sl_comments'\n  AND c.column_name IN (\n      'parent_comment_id',\n      'replies_backfill_cursor',\n      'replies_backfill_completed_at'\n  )\n\nUNION ALL\n\nSELECT\n    'CONSTRAINT' AS object_type,\n    con.conname AS object_name,\n    pg_get_constraintdef(con.oid) AS detail\nFROM pg_constraint con\nWHERE con.conrelid = 'public.sl_comments'::regclass\n  AND con.conname = 'sl_comments_parent_comment_id_fkey'\n\nUNION ALL\n\nSELECT\n    'INDEX' AS object_type,\n    indexname AS object_name,\n    indexdef AS detail\nFROM pg_indexes\nWHERE schemaname = 'public'\n  AND tablename = 'sl_comments'\n  AND indexname = 'sl_comments_parent_comment_id_idx'\n\nORDER BY\n    object_type,\n    object_name;",
+      "body": "function formatDrawerMetric(value) {\n    if (\n        value === null ||\n        value === undefined ||\n        value === ''\n    ) {\n        return '—';\n    }\n\n    var number = Number(value);\n\n    if (!isFinite(number)) {\n        return '—';\n    }\n\n    try {\n        return new Intl.NumberFormat('es-MX').format(number);\n    } catch (error) {\n        return String(number);\n    }\n}",
       "encodeParamsToggle": true,
       "paginationType": "NONE",
       "pluginSpecifiedTemplates": [
