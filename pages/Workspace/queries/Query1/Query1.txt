@@ -1,105 +1,14 @@
-BEGIN;
-
-CREATE TABLE public.sl_actor_posts (
-    id uuid
-        PRIMARY KEY
-        DEFAULT gen_random_uuid(),
-
-    tenant_id uuid
-        NOT NULL,
-
-    actor_id uuid
-        NOT NULL,
-
-    provider_code varchar(50)
-        NOT NULL,
-
-    external_post_id text
-        NOT NULL,
-
-    content_text text,
-
-    published_at timestamptz,
-
-    post_url text,
-
-    post_type varchar(30),
-
-    provider_payload jsonb
-        NOT NULL
-        DEFAULT '{}'::jsonb,
-
-    first_observed_at timestamptz
-        NOT NULL
-        DEFAULT CURRENT_TIMESTAMP,
-
-    last_observed_at timestamptz
-        NOT NULL
-        DEFAULT CURRENT_TIMESTAMP,
-
-    created_at timestamptz
-        NOT NULL
-        DEFAULT CURRENT_TIMESTAMP,
-
-    updated_at timestamptz
-        NOT NULL
-        DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT sl_actor_posts_tenant_fk
-        FOREIGN KEY (tenant_id)
-        REFERENCES public.sl_tenants(id)
-        ON DELETE CASCADE,
-
-    CONSTRAINT sl_actor_posts_actor_tenant_fk
-        FOREIGN KEY (tenant_id, actor_id)
-        REFERENCES public.sl_actors(tenant_id, id)
-        ON DELETE CASCADE,
-
-    CONSTRAINT sl_actor_posts_identity_unique
-        UNIQUE (
-            tenant_id,
-            actor_id,
-            external_post_id
-        ),
-
-    CONSTRAINT sl_actor_posts_tenant_id_id_unique
-        UNIQUE (
-            tenant_id,
-            id
-        ),
-
-    CONSTRAINT sl_actor_posts_provider_check
-        CHECK (
-            btrim(provider_code) <> ''
-        ),
-
-    CONSTRAINT sl_actor_posts_external_post_id_check
-        CHECK (
-            btrim(external_post_id) <> ''
-        ),
-
-    CONSTRAINT sl_actor_posts_payload_check
-        CHECK (
-            jsonb_typeof(provider_payload) = 'object'
-        ),
-
-    CONSTRAINT sl_actor_posts_observed_time_check
-        CHECK (
-            last_observed_at >= first_observed_at
-        )
-);
-
-CREATE INDEX sl_actor_posts_actor_published_idx
-    ON public.sl_actor_posts (
+SELECT
+    COUNT(*) AS grupos_duplicados,
+    COALESCE(SUM(cantidad - 1), 0) AS filas_duplicadas
+FROM (
+    SELECT
         tenant_id,
         actor_id,
-        published_at DESC
-    );
-
-CREATE INDEX sl_actor_posts_published_idx
-    ON public.sl_actor_posts (
-        tenant_id,
-        published_at DESC
-    );
-
-COMMIT;
+        external_post_id,
+        COUNT(*) AS cantidad
+    FROM public.sl_actor_posts
+    WHERE tenant_id = 'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid
+    GROUP BY tenant_id, actor_id, external_post_id
+    HAVING COUNT(*) > 1
+) d;
