@@ -1,0 +1,220 @@
+WITH params AS (
+    SELECT
+        u.tenant_id,
+
+        NULLIF(
+            {{
+                CW_Constructor.model.selectedQueryId
+                || appsmith.store.selectedQueryId
+                || appsmith.store.activeQueryId
+                || ""
+            }},
+            ''
+        )::uuid AS query_id
+
+    FROM public.sl_users u
+
+    WHERE lower(u.email) =
+          lower({{ appsmith.store.userEmail || "" }})
+
+      AND u.is_active = TRUE
+
+    LIMIT 1
+),
+
+social_events AS (
+    SELECT
+        'social_comment'::text
+            AS event_type,
+
+        c.id
+            AS event_id,
+
+        c.tenant_id,
+
+        prm.query_id,
+
+        p.id
+            AS post_id,
+
+        lower(t.platform)::text
+            AS platform,
+
+        NULLIF(
+            btrim(c.author_id),
+            ''
+        )
+            AS actor_id,
+
+        COALESCE(
+            NULLIF(
+                btrim(c.author_name),
+                ''
+            ),
+            NULLIF(
+                btrim(c.author_id),
+                ''
+            ),
+            'Autor sin identificar'
+        )
+            AS actor_name,
+
+        NULLIF(
+            btrim(c.author_url),
+            ''
+        )
+            AS actor_url,
+
+        NULLIF(
+            btrim(c.author_gender),
+            ''
+        )::text
+            AS actor_gender,
+
+        c.content_text,
+
+        c.published_at,
+
+        p.post_url
+            AS source_url,
+
+        NULL::text
+            AS source_name,
+
+        NULL::text
+            AS source_domain
+
+    FROM params prm
+
+    JOIN public.sl_query_social_posts qsp
+      ON qsp.tenant_id = prm.tenant_id
+     AND qsp.query_id = prm.query_id
+     AND qsp.is_active = TRUE
+
+    JOIN public.sl_social_posts p
+      ON p.tenant_id = qsp.tenant_id
+     AND p.id = qsp.post_id
+
+    JOIN public.sl_monitored_targets t
+      ON t.tenant_id = p.tenant_id
+     AND t.id = p.target_id
+
+    JOIN public.sl_comments c
+      ON c.tenant_id = p.tenant_id
+     AND c.post_id = p.id
+),
+
+web_events AS (
+    SELECT
+        'web_mention'::text
+            AS event_type,
+
+        wm.id
+            AS event_id,
+
+        wm.tenant_id,
+
+        prm.query_id,
+
+        NULL::uuid
+            AS post_id,
+
+        'web'::text
+            AS platform,
+
+        COALESCE(
+            NULLIF(
+                btrim(wm.source_domain),
+                ''
+            ),
+            NULLIF(
+                btrim(wm.source_name),
+                ''
+            )
+        )
+            AS actor_id,
+
+        COALESCE(
+            NULLIF(
+                btrim(wm.source_name),
+                ''
+            ),
+            NULLIF(
+                btrim(wm.source_domain),
+                ''
+            ),
+            'Fuente web'
+        )
+            AS actor_name,
+
+        wm.source_url
+            AS actor_url,
+
+        NULL::text
+            AS actor_gender,
+
+        CONCAT_WS(
+            E'\n',
+            NULLIF(
+                btrim(wm.title),
+                ''
+            ),
+            NULLIF(
+                btrim(wm.snippet),
+                ''
+            )
+        )
+            AS content_text,
+
+        COALESCE(
+            wm.published_at,
+            wm.detected_at
+        )
+            AS published_at,
+
+        wm.source_url,
+
+        wm.source_name,
+
+        wm.source_domain
+
+    FROM params prm
+
+    JOIN public.sl_query_web_keywords qwk
+      ON qwk.tenant_id = prm.tenant_id
+     AND qwk.query_id = prm.query_id
+
+    JOIN public.sl_web_mentions wm
+      ON wm.tenant_id = qwk.tenant_id
+     AND wm.keyword_id = qwk.keyword_id
+)
+
+SELECT
+    e.event_type,
+    e.event_id,
+    e.query_id,
+    e.post_id,
+    e.platform,
+    e.actor_id,
+    e.actor_name,
+    e.actor_url,
+    e.actor_gender,
+    e.content_text,
+    e.published_at,
+    e.source_url,
+    e.source_name,
+    e.source_domain
+
+FROM (
+    SELECT *
+    FROM social_events
+
+    UNION ALL
+
+    SELECT *
+    FROM web_events
+) e
+
+ORDER BY
+    e.published_at DESC NULLS LAST,
+    e.event_id;
