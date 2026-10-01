@@ -1,0 +1,201 @@
+WITH tenant_ctx AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) =
+          lower({{ appsmith.store.userEmail || "" }})
+      AND u.is_active = TRUE
+    LIMIT 1
+),
+
+latest_profiles AS (
+    SELECT DISTINCT ON (
+        s.tenant_id,
+        s.target_id
+    )
+        s.tenant_id,
+        s.target_id,
+        s.username,
+        s.display_name,
+        s.profile_url,
+        s.avatar_url
+    FROM public.sl_target_profile_snapshots s
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = s.tenant_id
+    ORDER BY
+        s.tenant_id,
+        s.target_id,
+        s.last_observed_at DESC
+),
+
+client_profiles AS (
+    SELECT
+        t.id AS target_id,
+        t.platform,
+        NULLIF(btrim(t.handle), '') AS target_handle,
+        NULLIF(btrim(lp.username), '') AS profile_username,
+        NULLIF(btrim(lp.display_name), '') AS profile_display_name,
+        lp.profile_url,
+        lp.avatar_url
+    FROM public.sl_monitored_targets t
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = t.tenant_id
+    LEFT JOIN latest_profiles lp
+      ON lp.tenant_id = t.tenant_id
+     AND lp.target_id = t.id
+    WHERE t.status = 'active'
+),
+
+actors AS (
+    SELECT
+        c.author_id,
+        max(NULLIF(btrim(c.author_name), '')) AS actor_name,
+        max(NULLIF(btrim(c.author_url), '')) AS actor_url,
+        count(*) AS comment_count
+    FROM public.sl_comments c
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = c.tenant_id
+    WHERE NULLIF(btrim(c.author_id), '') IS NOT NULL
+    GROUP BY
+        c.author_id
+),
+
+comment_client_mentions AS (
+    SELECT
+        c.id AS comment_id,
+        c.author_id,
+        c.author_name,
+        c.post_id,
+        c.published_at,
+        cp.target_id,
+        cp.platform,
+        cp.target_handle,
+        cp.profile_username,
+        cp.profile_display_name,
+
+        CASE
+            WHEN cp.target_handle IS NOT NULL
+             AND strpos(
+                    lower(COALESCE(c.content_text, '')),
+                    '@' || lower(cp.target_handle)
+                 ) > 0
+                THEN 'handle'
+
+            WHEN cp.profile_username IS NOT NULL
+             AND strpos(
+                    lower(COALESCE(c.content_text, '')),
+                    '@' || lower(cp.profile_username)
+                 ) > 0
+                THEN 'username'
+
+            WHEN cp.profile_display_name IS NOT NULL
+             AND length(cp.profile_display_name) >= 4
+             AND strpos(
+                    lower(COALESCE(c.content_text, '')),
+                    lower(cp.profile_display_name)
+                 ) > 0
+                THEN 'display_name'
+
+            ELSE NULL
+        END AS match_type
+
+    FROM public.sl_comments c
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = c.tenant_id
+    CROSS JOIN client_profiles cp
+),
+
+post_actor_references AS (
+    SELECT
+        p.id AS post_id,
+        p.target_id,
+        p.published_at,
+        a.author_id,
+        a.actor_name,
+
+        CASE
+            WHEN a.actor_name IS NOT NULL
+             AND length(a.actor_name) >= 4
+             AND strpos(
+                    lower(COALESCE(p.content_text, '')),
+                    lower(a.actor_name)
+                 ) > 0
+                THEN TRUE
+            ELSE FALSE
+        END AS actor_name_found
+
+    FROM public.sl_social_posts p
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = p.tenant_id
+    CROSS JOIN actors a
+),
+
+comment_stats AS (
+    SELECT
+        count(*) AS total_comments,
+
+        count(*) FILTER (
+            WHERE strpos(
+                COALESCE(content_text, ''),
+                '@'
+            ) > 0
+        ) AS comments_with_at_sign
+
+    FROM public.sl_comments c
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = c.tenant_id
+),
+
+post_stats AS (
+    SELECT
+        count(*) AS total_posts,
+
+        count(*) FILTER (
+            WHERE strpos(
+                COALESCE(content_text, ''),
+                '@'
+            ) > 0
+        ) AS posts_with_at_sign
+
+    FROM public.sl_social_posts p
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = p.tenant_id
+)
+
+SELECT
+    (SELECT count(*) FROM client_profiles)
+        AS client_profiles,
+
+    (SELECT count(*) FROM actors)
+        AS unique_actors,
+
+    (SELECT total_comments FROM comment_stats)
+        AS total_comments,
+
+    (SELECT comments_with_at_sign FROM comment_stats)
+        AS comments_with_at_sign,
+
+    (
+        SELECT count(*)
+        FROM comment_client_mentions
+        WHERE match_type IS NOT NULL
+    ) AS comments_referencing_client_profile,
+
+    (
+        SELECT count(DISTINCT author_id)
+        FROM comment_client_mentions
+        WHERE match_type IS NOT NULL
+          AND author_id IS NOT NULL
+    ) AS actors_referencing_client_profile,
+
+    (SELECT total_posts FROM post_stats)
+        AS total_posts,
+
+    (SELECT posts_with_at_sign FROM post_stats)
+        AS posts_with_at_sign,
+
+    (
+        SELECT count(*)
+        FROM post_actor_references
+        WHERE actor_name_found = TRUE
+    ) AS client_posts_referencing_known_actor;

@@ -1,0 +1,353 @@
+WITH tenant_ctx AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) =
+          lower({{ appsmith.store.userEmail || "" }})
+      AND u.is_active = TRUE
+    LIMIT 1
+),
+
+latest_profiles AS (
+    SELECT DISTINCT ON (
+        s.tenant_id,
+        s.target_id
+    )
+        s.tenant_id,
+        s.target_id,
+        s.username,
+        s.display_name,
+        s.profile_url,
+        s.avatar_url
+    FROM public.sl_target_profile_snapshots s
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = s.tenant_id
+    ORDER BY
+        s.tenant_id,
+        s.target_id,
+        s.last_observed_at DESC
+),
+
+client_profiles AS (
+    SELECT
+        t.id AS target_id,
+        lower(t.platform)::text AS platform,
+
+        NULLIF(
+            btrim(t.external_profile_id),
+            ''
+        ) AS external_profile_id,
+
+        NULLIF(
+            btrim(t.handle),
+            ''
+        ) AS target_handle,
+
+        NULLIF(
+            btrim(lp.username),
+            ''
+        ) AS profile_username,
+
+        NULLIF(
+            btrim(lp.display_name),
+            ''
+        ) AS profile_display_name,
+
+        lp.profile_url,
+        lp.avatar_url
+
+    FROM public.sl_monitored_targets t
+
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = t.tenant_id
+
+    LEFT JOIN latest_profiles lp
+      ON lp.tenant_id = t.tenant_id
+     AND lp.target_id = t.id
+
+    WHERE t.status = 'active'
+),
+
+social_comments AS (
+    SELECT
+        c.id AS comment_id,
+        c.author_id,
+        c.author_name,
+        c.author_url,
+        c.content_text,
+        c.published_at,
+        p.id AS post_id,
+        p.post_url,
+        lower(t.platform)::text AS platform
+
+    FROM public.sl_comments c
+
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = c.tenant_id
+
+    JOIN public.sl_social_posts p
+      ON p.tenant_id = c.tenant_id
+     AND p.id = c.post_id
+
+    JOIN public.sl_monitored_targets t
+      ON t.tenant_id = p.tenant_id
+     AND t.id = p.target_id
+),
+
+actors AS (
+    SELECT
+        sc.platform,
+        sc.author_id,
+
+        max(
+            NULLIF(
+                btrim(sc.author_name),
+                ''
+            )
+        ) AS actor_name,
+
+        max(
+            NULLIF(
+                btrim(sc.author_url),
+                ''
+            )
+        ) AS actor_url,
+
+        count(*) AS comment_count
+
+    FROM social_comments sc
+
+    WHERE NULLIF(
+        btrim(sc.author_id),
+        ''
+    ) IS NOT NULL
+
+    GROUP BY
+        sc.platform,
+        sc.author_id
+),
+
+comment_client_candidates AS (
+    SELECT
+        sc.comment_id,
+        sc.post_id,
+        sc.platform,
+        sc.author_id,
+        sc.author_name,
+        sc.content_text,
+        sc.published_at,
+
+        cp.target_id,
+        cp.external_profile_id,
+        cp.target_handle,
+        cp.profile_username,
+        cp.profile_display_name,
+
+        CASE
+            WHEN cp.target_handle IS NOT NULL
+             AND strpos(
+                    lower(
+                        COALESCE(
+                            sc.content_text,
+                            ''
+                        )
+                    ),
+                    '@' ||
+                    lower(
+                        regexp_replace(
+                            cp.target_handle,
+                            '^@',
+                            ''
+                        )
+                    )
+                 ) > 0
+                THEN 'handle'
+
+            WHEN cp.profile_username IS NOT NULL
+             AND strpos(
+                    lower(
+                        COALESCE(
+                            sc.content_text,
+                            ''
+                        )
+                    ),
+                    '@' ||
+                    lower(
+                        regexp_replace(
+                            cp.profile_username,
+                            '^@',
+                            ''
+                        )
+                    )
+                 ) > 0
+                THEN 'username'
+
+            WHEN cp.profile_display_name IS NOT NULL
+             AND length(
+                    cp.profile_display_name
+                 ) >= 4
+             AND strpos(
+                    lower(
+                        COALESCE(
+                            sc.content_text,
+                            ''
+                        )
+                    ),
+                    lower(
+                        cp.profile_display_name
+                    )
+                 ) > 0
+                THEN 'display_name'
+
+            ELSE NULL
+        END AS match_type,
+
+        CASE
+            WHEN cp.external_profile_id IS NOT NULL
+             AND sc.author_id IS NOT NULL
+             AND lower(
+                    cp.external_profile_id
+                 ) =
+                 lower(
+                    sc.author_id
+                 )
+                THEN TRUE
+            ELSE FALSE
+        END AS author_is_client_profile
+
+    FROM social_comments sc
+
+    JOIN client_profiles cp
+      ON cp.platform = sc.platform
+),
+
+client_post_actor_candidates AS (
+    SELECT
+        p.id AS post_id,
+        lower(t.platform)::text AS platform,
+        p.content_text,
+        p.published_at,
+
+        a.author_id AS actor_id,
+        a.actor_name,
+
+        strpos(
+            lower(
+                COALESCE(
+                    p.content_text,
+                    ''
+                )
+            ),
+            lower(
+                a.actor_name
+            )
+        ) > 0 AS actor_name_found
+
+    FROM public.sl_social_posts p
+
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = p.tenant_id
+
+    JOIN public.sl_monitored_targets t
+      ON t.tenant_id = p.tenant_id
+     AND t.id = p.target_id
+
+    JOIN actors a
+      ON a.platform =
+         lower(t.platform)
+
+    WHERE a.actor_name IS NOT NULL
+      AND length(a.actor_name) >= 4
+
+      AND NOT EXISTS (
+          SELECT 1
+          FROM client_profiles cp
+          WHERE cp.platform = a.platform
+            AND cp.external_profile_id IS NOT NULL
+            AND lower(
+                    cp.external_profile_id
+                ) =
+                lower(
+                    a.author_id
+                )
+      )
+)
+
+SELECT
+    (
+        SELECT count(*)
+        FROM client_profiles
+    ) AS client_profiles,
+
+    (
+        SELECT count(*)
+        FROM actors
+    ) AS unique_platform_actors,
+
+    (
+        SELECT count(*)
+        FROM social_comments
+    ) AS total_comments,
+
+    (
+        SELECT count(*)
+        FROM comment_client_candidates
+        WHERE match_type IS NOT NULL
+    ) AS client_reference_candidates,
+
+    (
+        SELECT count(*)
+        FROM comment_client_candidates
+        WHERE match_type IN (
+            'handle',
+            'username'
+        )
+    ) AS direct_handle_mentions,
+
+    (
+        SELECT count(*)
+        FROM comment_client_candidates
+        WHERE match_type =
+              'display_name'
+    ) AS display_name_references,
+
+    (
+        SELECT count(*)
+        FROM comment_client_candidates
+        WHERE match_type IS NOT NULL
+          AND author_is_client_profile = TRUE
+    ) AS self_authored_references,
+
+    (
+        SELECT count(*)
+        FROM comment_client_candidates
+        WHERE match_type IS NOT NULL
+          AND author_is_client_profile = FALSE
+    ) AS external_actor_references,
+
+    (
+        SELECT count(
+            DISTINCT
+            platform || ':' || author_id
+        )
+        FROM comment_client_candidates
+        WHERE match_type IS NOT NULL
+          AND author_is_client_profile = FALSE
+          AND author_id IS NOT NULL
+    ) AS external_actors_referencing_client,
+
+    (
+        SELECT count(*)
+        FROM client_post_actor_candidates
+        WHERE actor_name_found = TRUE
+    ) AS client_posts_referencing_external_actor,
+
+    (
+        SELECT count(
+            DISTINCT
+            platform || ':' || actor_id
+        )
+        FROM client_post_actor_candidates
+        WHERE actor_name_found = TRUE
+    ) AS external_actors_referenced_by_client
+;

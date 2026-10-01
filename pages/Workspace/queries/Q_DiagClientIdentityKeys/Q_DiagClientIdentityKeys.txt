@@ -1,0 +1,68 @@
+WITH tenant_ctx AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) =
+          lower({{ appsmith.store.userEmail || "" }})
+      AND u.is_active = TRUE
+    LIMIT 1
+),
+
+latest_profiles AS (
+    SELECT DISTINCT ON (
+        s.tenant_id,
+        s.target_id
+    )
+        s.tenant_id,
+        s.target_id,
+        s.provider_code,
+        s.username,
+        s.display_name,
+        s.profile_url,
+        s.avatar_url,
+        s.metadata,
+        s.last_observed_at
+    FROM public.sl_target_profile_snapshots s
+
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = s.tenant_id
+
+    ORDER BY
+        s.tenant_id,
+        s.target_id,
+        s.last_observed_at DESC
+)
+
+SELECT
+    t.id AS target_id,
+    lower(t.platform)::text AS platform,
+    t.handle,
+    t.external_profile_id,
+
+    lp.provider_code,
+    lp.username,
+    lp.display_name,
+    lp.profile_url,
+
+    lp.metadata ->> 'external_id'
+        AS snapshot_external_id,
+
+    lp.metadata -> 'provider_profile'
+        AS provider_profile,
+
+    lp.last_observed_at
+
+FROM public.sl_monitored_targets t
+
+JOIN tenant_ctx tc
+  ON tc.tenant_id = t.tenant_id
+
+LEFT JOIN latest_profiles lp
+  ON lp.tenant_id = t.tenant_id
+ AND lp.target_id = t.id
+
+WHERE t.status = 'active'
+
+ORDER BY
+    platform,
+    t.handle;

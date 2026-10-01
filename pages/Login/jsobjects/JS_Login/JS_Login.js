@@ -15,7 +15,7 @@ export default {
       storeValue('userEmail', email);
       storeValue('userRole', isAdmin ? 'admin' : 'viewer');
       showAlert('Acceso concedido. Bienvenido.', 'success');
-      navigateTo('Dashboard');
+      navigateTo('Workspace');
     } else {
       showAlert('Usuario no encontrado o sin permisos', 'error');
     }

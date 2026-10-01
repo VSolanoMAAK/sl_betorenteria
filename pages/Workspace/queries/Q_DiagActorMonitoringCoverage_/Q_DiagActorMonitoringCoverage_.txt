@@ -1,0 +1,298 @@
+WITH tenant_ctx AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) =
+          lower({{ appsmith.store.userEmail || "" }})
+      AND u.is_active = TRUE
+    LIMIT 1
+),
+
+latest_profiles AS (
+    SELECT DISTINCT ON (
+        s.tenant_id,
+        s.target_id
+    )
+        s.tenant_id,
+        s.target_id,
+        s.username,
+        s.profile_url,
+
+        NULLIF(
+            btrim(
+                s.metadata ->> 'external_id'
+            ),
+            ''
+        ) AS snapshot_external_id
+
+    FROM public.sl_target_profile_snapshots s
+
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = s.tenant_id
+
+    ORDER BY
+        s.tenant_id,
+        s.target_id,
+        s.last_observed_at DESC
+),
+
+client_profiles AS (
+    SELECT
+        t.tenant_id,
+        t.id AS target_id,
+        lower(t.platform)::text AS platform,
+
+        NULLIF(
+            btrim(t.external_profile_id),
+            ''
+        ) AS external_profile_id,
+
+        NULLIF(
+            btrim(t.handle),
+            ''
+        ) AS target_handle,
+
+        NULLIF(
+            btrim(lp.username),
+            ''
+        ) AS profile_username,
+
+        NULLIF(
+            btrim(lp.profile_url),
+            ''
+        ) AS profile_url,
+
+        lp.snapshot_external_id
+
+    FROM public.sl_monitored_targets t
+
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = t.tenant_id
+
+    LEFT JOIN latest_profiles lp
+      ON lp.tenant_id = t.tenant_id
+     AND lp.target_id = t.id
+
+    WHERE t.status = 'active'
+),
+
+actors AS (
+    SELECT
+        lower(t.platform)::text AS platform,
+
+        c.author_id,
+
+        max(
+            NULLIF(
+                btrim(c.author_name),
+                ''
+            )
+        ) AS actor_name,
+
+        max(
+            NULLIF(
+                btrim(c.author_url),
+                ''
+            )
+        ) AS actor_url,
+
+        count(*) AS comment_count,
+
+        max(c.published_at)
+            AS last_seen_at
+
+    FROM public.sl_comments c
+
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = c.tenant_id
+
+    JOIN public.sl_social_posts p
+      ON p.tenant_id = c.tenant_id
+     AND p.id = c.post_id
+
+    JOIN public.sl_monitored_targets t
+      ON t.tenant_id = p.tenant_id
+     AND t.id = p.target_id
+
+    WHERE NULLIF(
+        btrim(c.author_id),
+        ''
+    ) IS NOT NULL
+
+    GROUP BY
+        lower(t.platform),
+        c.author_id
+),
+
+normalized_actors AS (
+    SELECT
+        a.*,
+
+        CASE
+            WHEN a.platform = 'instagram'
+             AND a.actor_url ~* 'instagram\.com/'
+                THEN lower(
+                    regexp_replace(
+                        a.actor_url,
+                        '^https?://(www\.)?instagram\.com/([^/?#]+)/?.*$',
+                        '\2',
+                        'i'
+                    )
+                )
+
+            ELSE NULL
+        END AS resolved_handle
+
+    FROM actors a
+),
+
+external_actors AS (
+    SELECT
+        a.*
+
+    FROM normalized_actors a
+
+    WHERE NOT EXISTS (
+        SELECT 1
+
+        FROM client_profiles cp
+
+        WHERE cp.platform = a.platform
+
+          AND (
+              (
+                  cp.snapshot_external_id IS NOT NULL
+                  AND lower(
+                        cp.snapshot_external_id
+                      ) =
+                      lower(
+                        a.author_id
+                      )
+              )
+
+              OR
+
+              (
+                  cp.external_profile_id IS NOT NULL
+                  AND lower(
+                        cp.external_profile_id
+                      ) =
+                      lower(
+                        a.author_id
+                      )
+              )
+
+              OR
+
+              (
+                  cp.profile_url IS NOT NULL
+                  AND a.actor_url IS NOT NULL
+
+                  AND regexp_replace(
+                        regexp_replace(
+                            lower(cp.profile_url),
+                            '[?#].*$',
+                            ''
+                        ),
+                        '/+$',
+                        ''
+                      )
+                      =
+                      regexp_replace(
+                        regexp_replace(
+                            lower(a.actor_url),
+                            '[?#].*$',
+                            ''
+                        ),
+                        '/+$',
+                        ''
+                      )
+              )
+
+              OR
+
+              (
+                  a.platform = 'instagram'
+                  AND a.resolved_handle IS NOT NULL
+
+                  AND (
+                      (
+                          cp.target_handle IS NOT NULL
+                          AND a.resolved_handle =
+                              lower(
+                                  regexp_replace(
+                                      cp.target_handle,
+                                      '^@',
+                                      ''
+                                  )
+                              )
+                      )
+
+                      OR
+
+                      (
+                          cp.profile_username IS NOT NULL
+                          AND a.resolved_handle =
+                              lower(
+                                  regexp_replace(
+                                      cp.profile_username,
+                                      '^@',
+                                      ''
+                                  )
+                              )
+                      )
+                  )
+              )
+          )
+    )
+),
+
+classified AS (
+    SELECT
+        ea.*,
+
+        CASE
+            WHEN ea.platform = 'facebook'
+             AND ea.actor_url ~* 'facebook\.com/'
+                THEN 'direct_url'
+
+            WHEN ea.platform = 'facebook'
+             AND ea.author_id ~ '^[0-9]+$'
+                THEN 'candidate_page_id'
+
+            WHEN ea.platform = 'facebook'
+             AND ea.author_id LIKE 'pfbid%'
+                THEN 'unresolved_pfbid'
+
+            WHEN ea.platform = 'instagram'
+             AND ea.resolved_handle IS NOT NULL
+                THEN 'direct_handle'
+
+            ELSE 'unsupported'
+        END AS monitoring_status
+
+    FROM external_actors ea
+)
+
+SELECT
+    platform,
+    monitoring_status,
+    count(*) AS actor_count,
+
+    round(
+        count(*)::numeric
+        * 100
+        /
+        sum(count(*)) OVER (),
+        2
+    ) AS pct_of_external_actors
+
+FROM classified
+
+GROUP BY
+    platform,
+    monitoring_status
+
+ORDER BY
+    platform,
+    monitoring_status;

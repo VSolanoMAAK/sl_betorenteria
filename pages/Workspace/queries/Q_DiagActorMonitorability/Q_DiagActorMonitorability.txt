@@ -1,0 +1,107 @@
+WITH tenant_ctx AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) =
+          lower({{ appsmith.store.userEmail || "" }})
+      AND u.is_active = TRUE
+    LIMIT 1
+),
+
+actors AS (
+    SELECT
+        lower(t.platform)::text
+            AS platform,
+
+        c.author_id,
+
+        max(
+            NULLIF(
+                btrim(c.author_name),
+                ''
+            )
+        ) AS actor_name,
+
+        max(
+            NULLIF(
+                btrim(c.author_url),
+                ''
+            )
+        ) AS actor_url
+
+    FROM public.sl_comments c
+
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = c.tenant_id
+
+    JOIN public.sl_social_posts p
+      ON p.tenant_id = c.tenant_id
+     AND p.id = c.post_id
+
+    JOIN public.sl_monitored_targets t
+      ON t.tenant_id = p.tenant_id
+     AND t.id = p.target_id
+
+    WHERE NULLIF(
+        btrim(c.author_id),
+        ''
+    ) IS NOT NULL
+
+    GROUP BY
+        lower(t.platform),
+        c.author_id
+)
+
+SELECT
+    platform,
+
+    count(*)
+        AS unique_actors,
+
+    count(*) FILTER (
+        WHERE actor_url IS NOT NULL
+    ) AS with_actor_url,
+
+    count(*) FILTER (
+        WHERE actor_url IS NULL
+    ) AS without_actor_url,
+
+    count(*) FILTER (
+        WHERE author_id ~ '^[0-9]+$'
+    ) AS numeric_external_id,
+
+    count(*) FILTER (
+        WHERE author_id LIKE 'pfbid%'
+    ) AS facebook_pfbid,
+
+    count(*) FILTER (
+        WHERE platform = 'instagram'
+          AND actor_url ~* 'instagram\.com/'
+    ) AS instagram_with_profile_url,
+
+    count(*) FILTER (
+        WHERE platform = 'facebook'
+          AND actor_url ~* 'facebook\.com/'
+    ) AS facebook_with_profile_url,
+
+    round(
+        (
+            count(*) FILTER (
+                WHERE actor_url IS NOT NULL
+            )::numeric
+            /
+            NULLIF(
+                count(*),
+                0
+            )
+        ) * 100,
+        2
+    ) AS profile_url_coverage_pct
+
+FROM actors
+
+GROUP BY
+    platform
+
+ORDER BY
+    platform;

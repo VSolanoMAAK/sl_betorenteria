@@ -1,170 +1,105 @@
-WITH params AS (
-    SELECT
-        u.tenant_id,
+BEGIN;
 
-        NULLIF(
-            {{
-                CW_Constructor.model.selectedQueryId
-                || appsmith.store.selectedQueryId
-                || appsmith.store.activeQueryId
-                || ""
-            }},
-            ''
-        )::uuid AS query_id,
+CREATE TABLE public.sl_actor_posts (
+    id uuid
+        PRIMARY KEY
+        DEFAULT gen_random_uuid(),
 
-        NULLIF(
-            {{
-                CW_Constructor.model.selectedQueryId
-                || ""
-            }},
-            ''
-        )::text AS cw_selected_query_id,
+    tenant_id uuid
+        NOT NULL,
 
-        NULLIF(
-            {{
-                appsmith.store.selectedQueryId
-                || ""
-            }},
-            ''
-        )::text AS store_selected_query_id,
+    actor_id uuid
+        NOT NULL,
 
-        NULLIF(
-            {{
-                appsmith.store.activeQueryId
-                || ""
-            }},
-            ''
-        )::text AS store_active_query_id
+    provider_code varchar(50)
+        NOT NULL,
 
-    FROM public.sl_users u
+    external_post_id text
+        NOT NULL,
 
-    WHERE lower(u.email) =
-          lower({{ appsmith.store.userEmail || "" }})
+    content_text text,
 
-      AND u.is_active = TRUE
+    published_at timestamptz,
 
-    LIMIT 1
-),
+    post_url text,
 
-query_posts AS (
-    SELECT
-        qsp.tenant_id,
-        qsp.query_id,
-        qsp.post_id,
-        qsp.is_active
+    post_type varchar(30),
 
-    FROM params prm
+    provider_payload jsonb
+        NOT NULL
+        DEFAULT '{}'::jsonb,
 
-    JOIN public.sl_query_social_posts qsp
-      ON qsp.tenant_id = prm.tenant_id
-     AND qsp.query_id = prm.query_id
-),
+    first_observed_at timestamptz
+        NOT NULL
+        DEFAULT CURRENT_TIMESTAMP,
 
-active_query_posts AS (
-    SELECT
-        qp.*
+    last_observed_at timestamptz
+        NOT NULL
+        DEFAULT CURRENT_TIMESTAMP,
 
-    FROM query_posts qp
+    created_at timestamptz
+        NOT NULL
+        DEFAULT CURRENT_TIMESTAMP,
 
-    WHERE qp.is_active = TRUE
-),
+    updated_at timestamptz
+        NOT NULL
+        DEFAULT CURRENT_TIMESTAMP,
 
-query_comments AS (
-    SELECT
-        c.id,
-        c.post_id,
-        c.author_id,
-        c.author_name,
-        c.author_url,
-        c.content_text,
-        c.published_at
+    CONSTRAINT sl_actor_posts_tenant_fk
+        FOREIGN KEY (tenant_id)
+        REFERENCES public.sl_tenants(id)
+        ON DELETE CASCADE,
 
-    FROM params prm
+    CONSTRAINT sl_actor_posts_actor_tenant_fk
+        FOREIGN KEY (tenant_id, actor_id)
+        REFERENCES public.sl_actors(tenant_id, id)
+        ON DELETE CASCADE,
 
-    JOIN active_query_posts qp
-      ON qp.tenant_id = prm.tenant_id
-     AND qp.query_id = prm.query_id
+    CONSTRAINT sl_actor_posts_identity_unique
+        UNIQUE (
+            tenant_id,
+            actor_id,
+            external_post_id
+        ),
 
-    JOIN public.sl_comments c
-      ON c.tenant_id = qp.tenant_id
-     AND c.post_id = qp.post_id
-),
+    CONSTRAINT sl_actor_posts_tenant_id_id_unique
+        UNIQUE (
+            tenant_id,
+            id
+        ),
 
-query_web_keywords AS (
-    SELECT
-        qwk.tenant_id,
-        qwk.query_id,
-        qwk.keyword_id
+    CONSTRAINT sl_actor_posts_provider_check
+        CHECK (
+            btrim(provider_code) <> ''
+        ),
 
-    FROM params prm
+    CONSTRAINT sl_actor_posts_external_post_id_check
+        CHECK (
+            btrim(external_post_id) <> ''
+        ),
 
-    JOIN public.sl_query_web_keywords qwk
-      ON qwk.tenant_id = prm.tenant_id
-     AND qwk.query_id = prm.query_id
-),
+    CONSTRAINT sl_actor_posts_payload_check
+        CHECK (
+            jsonb_typeof(provider_payload) = 'object'
+        ),
 
-query_web_mentions AS (
-    SELECT
-        wm.id,
-        wm.keyword_id,
-        wm.source_name,
-        wm.source_domain,
-        wm.source_url
+    CONSTRAINT sl_actor_posts_observed_time_check
+        CHECK (
+            last_observed_at >= first_observed_at
+        )
+);
 
-    FROM params prm
+CREATE INDEX sl_actor_posts_actor_published_idx
+    ON public.sl_actor_posts (
+        tenant_id,
+        actor_id,
+        published_at DESC
+    );
 
-    JOIN query_web_keywords qwk
-      ON qwk.tenant_id = prm.tenant_id
-     AND qwk.query_id = prm.query_id
+CREATE INDEX sl_actor_posts_published_idx
+    ON public.sl_actor_posts (
+        tenant_id,
+        published_at DESC
+    );
 
-    JOIN public.sl_web_mentions wm
-      ON wm.tenant_id = qwk.tenant_id
-     AND wm.keyword_id = qwk.keyword_id
-)
-
-SELECT
-    prm.tenant_id,
-
-    prm.query_id,
-
-    prm.cw_selected_query_id,
-
-    prm.store_selected_query_id,
-
-    prm.store_active_query_id,
-
-    (
-        SELECT COUNT(*)
-        FROM query_posts
-    ) AS query_post_relations,
-
-    (
-        SELECT COUNT(*)
-        FROM active_query_posts
-    ) AS active_post_relations,
-
-    (
-        SELECT COUNT(*)
-        FROM query_comments
-    ) AS comments_found,
-
-    (
-        SELECT COUNT(*)
-        FROM query_comments
-        WHERE NULLIF(
-            btrim(author_name),
-            ''
-        ) IS NOT NULL
-    ) AS comments_with_author_name,
-
-    (
-        SELECT COUNT(*)
-        FROM query_web_keywords
-    ) AS web_keywords_found,
-
-    (
-        SELECT COUNT(*)
-        FROM query_web_mentions
-    ) AS web_mentions_found
-
-FROM params prm;
+COMMIT;

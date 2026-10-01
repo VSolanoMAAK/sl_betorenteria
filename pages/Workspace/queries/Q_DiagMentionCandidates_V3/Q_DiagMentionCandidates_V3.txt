@@ -1,0 +1,410 @@
+WITH tenant_ctx AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) =
+          lower({{ appsmith.store.userEmail || "" }})
+      AND u.is_active = TRUE
+    LIMIT 1
+),
+
+latest_profiles AS (
+    SELECT DISTINCT ON (
+        s.tenant_id,
+        s.target_id
+    )
+        s.tenant_id,
+        s.target_id,
+        s.username,
+        s.display_name,
+        s.profile_url,
+        s.avatar_url
+    FROM public.sl_target_profile_snapshots s
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = s.tenant_id
+    ORDER BY
+        s.tenant_id,
+        s.target_id,
+        s.last_observed_at DESC
+),
+
+client_profiles AS (
+    SELECT
+        t.tenant_id,
+        t.id AS target_id,
+        lower(t.platform)::text AS platform,
+
+        NULLIF(
+            btrim(t.external_profile_id),
+            ''
+        ) AS external_profile_id,
+
+        NULLIF(
+            btrim(t.handle),
+            ''
+        ) AS target_handle,
+
+        NULLIF(
+            btrim(lp.username),
+            ''
+        ) AS profile_username,
+
+        NULLIF(
+            btrim(lp.display_name),
+            ''
+        ) AS profile_display_name,
+
+        lp.profile_url,
+        lp.avatar_url
+
+    FROM public.sl_monitored_targets t
+
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = t.tenant_id
+
+    LEFT JOIN latest_profiles lp
+      ON lp.tenant_id = t.tenant_id
+     AND lp.target_id = t.id
+
+    WHERE t.status = 'active'
+),
+
+social_comments AS (
+    SELECT
+        c.id AS comment_id,
+        c.author_id,
+        c.author_name,
+        c.author_url,
+        c.content_text,
+        c.published_at,
+
+        p.id AS post_id,
+        p.post_url,
+
+        lower(t.platform)::text AS platform
+
+    FROM public.sl_comments c
+
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = c.tenant_id
+
+    JOIN public.sl_social_posts p
+      ON p.tenant_id = c.tenant_id
+     AND p.id = c.post_id
+
+    JOIN public.sl_monitored_targets t
+      ON t.tenant_id = p.tenant_id
+     AND t.id = p.target_id
+),
+
+actors AS (
+    SELECT
+        sc.platform,
+        sc.author_id,
+
+        max(
+            NULLIF(
+                btrim(sc.author_name),
+                ''
+            )
+        ) AS actor_name,
+
+        max(
+            NULLIF(
+                btrim(sc.author_url),
+                ''
+            )
+        ) AS actor_url
+
+    FROM social_comments sc
+
+    WHERE NULLIF(
+        btrim(sc.author_id),
+        ''
+    ) IS NOT NULL
+
+    GROUP BY
+        sc.platform,
+        sc.author_id
+),
+
+actor_to_client AS (
+    SELECT
+        'actor_to_client'::text
+            AS direction,
+
+        sc.comment_id
+            AS evidence_id,
+
+        sc.platform,
+
+        sc.author_id
+            AS actor_id,
+
+        sc.author_name
+            AS actor_name,
+
+        sc.author_url
+            AS actor_url,
+
+        cp.target_id
+            AS client_target_id,
+
+        cp.target_handle
+            AS client_handle,
+
+        cp.profile_username
+            AS client_username,
+
+        cp.profile_display_name
+            AS client_display_name,
+
+        cp.profile_url
+            AS client_profile_url,
+
+        cp.avatar_url
+            AS client_avatar_url,
+
+        CASE
+            WHEN cp.target_handle IS NOT NULL
+             AND strpos(
+                    lower(
+                        COALESCE(
+                            sc.content_text,
+                            ''
+                        )
+                    ),
+                    '@' ||
+                    lower(
+                        regexp_replace(
+                            cp.target_handle,
+                            '^@',
+                            ''
+                        )
+                    )
+                 ) > 0
+                THEN 'direct_handle'
+
+            WHEN cp.profile_username IS NOT NULL
+             AND strpos(
+                    lower(
+                        COALESCE(
+                            sc.content_text,
+                            ''
+                        )
+                    ),
+                    '@' ||
+                    lower(
+                        regexp_replace(
+                            cp.profile_username,
+                            '^@',
+                            ''
+                        )
+                    )
+                 ) > 0
+                THEN 'direct_username'
+
+            WHEN cp.profile_display_name IS NOT NULL
+             AND length(
+                    cp.profile_display_name
+                 ) >= 4
+             AND strpos(
+                    lower(
+                        COALESCE(
+                            sc.content_text,
+                            ''
+                        )
+                    ),
+                    lower(
+                        cp.profile_display_name
+                    )
+                 ) > 0
+                THEN 'display_name_reference'
+
+            ELSE NULL
+        END AS match_type,
+
+        CASE
+            WHEN cp.target_handle IS NOT NULL
+             AND strpos(
+                    lower(
+                        COALESCE(
+                            sc.content_text,
+                            ''
+                        )
+                    ),
+                    '@' ||
+                    lower(
+                        regexp_replace(
+                            cp.target_handle,
+                            '^@',
+                            ''
+                        )
+                    )
+                 ) > 0
+                THEN '@' ||
+                     regexp_replace(
+                         cp.target_handle,
+                         '^@',
+                         ''
+                     )
+
+            WHEN cp.profile_username IS NOT NULL
+             AND strpos(
+                    lower(
+                        COALESCE(
+                            sc.content_text,
+                            ''
+                        )
+                    ),
+                    '@' ||
+                    lower(
+                        regexp_replace(
+                            cp.profile_username,
+                            '^@',
+                            ''
+                        )
+                    )
+                 ) > 0
+                THEN '@' ||
+                     regexp_replace(
+                         cp.profile_username,
+                         '^@',
+                         ''
+                     )
+
+            ELSE cp.profile_display_name
+        END AS matched_value,
+
+        sc.content_text
+            AS evidence_text,
+
+        sc.published_at,
+
+        sc.post_url
+            AS source_url
+
+    FROM social_comments sc
+
+    JOIN client_profiles cp
+      ON cp.platform = sc.platform
+
+    WHERE NOT (
+        cp.external_profile_id IS NOT NULL
+        AND sc.author_id IS NOT NULL
+        AND lower(cp.external_profile_id) =
+            lower(sc.author_id)
+    )
+),
+
+client_to_actor AS (
+    SELECT
+        'client_to_actor'::text
+            AS direction,
+
+        p.id
+            AS evidence_id,
+
+        lower(t.platform)::text
+            AS platform,
+
+        a.author_id
+            AS actor_id,
+
+        a.actor_name,
+
+        a.actor_url,
+
+        cp.target_id
+            AS client_target_id,
+
+        cp.target_handle
+            AS client_handle,
+
+        cp.profile_username
+            AS client_username,
+
+        cp.profile_display_name
+            AS client_display_name,
+
+        cp.profile_url
+            AS client_profile_url,
+
+        cp.avatar_url
+            AS client_avatar_url,
+
+        'actor_name_reference'::text
+            AS match_type,
+
+        a.actor_name
+            AS matched_value,
+
+        p.content_text
+            AS evidence_text,
+
+        p.published_at,
+
+        p.post_url
+            AS source_url
+
+    FROM public.sl_social_posts p
+
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = p.tenant_id
+
+    JOIN public.sl_monitored_targets t
+      ON t.tenant_id = p.tenant_id
+     AND t.id = p.target_id
+
+    JOIN client_profiles cp
+      ON cp.target_id = t.id
+     AND cp.platform =
+         lower(t.platform)
+
+    JOIN actors a
+      ON a.platform =
+         lower(t.platform)
+
+    WHERE a.actor_name IS NOT NULL
+      AND length(a.actor_name) >= 4
+
+      AND strpos(
+            lower(
+                COALESCE(
+                    p.content_text,
+                    ''
+                )
+            ),
+            lower(
+                a.actor_name
+            )
+          ) > 0
+
+      AND NOT (
+          cp.external_profile_id IS NOT NULL
+          AND a.author_id IS NOT NULL
+          AND lower(
+                cp.external_profile_id
+              ) =
+              lower(
+                a.author_id
+              )
+      )
+)
+
+SELECT *
+FROM (
+    SELECT *
+    FROM actor_to_client
+    WHERE match_type IS NOT NULL
+
+    UNION ALL
+
+    SELECT *
+    FROM client_to_actor
+) mentions
+
+ORDER BY
+    direction,
+    published_at DESC,
+    evidence_id;

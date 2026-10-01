@@ -1,0 +1,128 @@
+WITH tenant_ctx AS (
+    SELECT
+        u.tenant_id
+    FROM public.sl_users u
+    WHERE lower(u.email) =
+          lower({{ appsmith.store.userEmail || "" }})
+      AND u.is_active = TRUE
+    LIMIT 1
+),
+
+actors AS (
+    SELECT
+        lower(t.platform)::text
+            AS platform,
+
+        c.author_id,
+
+        max(
+            NULLIF(
+                btrim(c.author_name),
+                ''
+            )
+        ) AS actor_name,
+
+        max(
+            NULLIF(
+                btrim(c.author_url),
+                ''
+            )
+        ) AS actor_url,
+
+        count(*) AS comment_count,
+
+        max(c.published_at)
+            AS last_seen_at
+
+    FROM public.sl_comments c
+
+    JOIN tenant_ctx tc
+      ON tc.tenant_id = c.tenant_id
+
+    JOIN public.sl_social_posts p
+      ON p.tenant_id = c.tenant_id
+     AND p.id = c.post_id
+
+    JOIN public.sl_monitored_targets t
+      ON t.tenant_id = p.tenant_id
+     AND t.id = p.target_id
+
+    WHERE NULLIF(
+        btrim(c.author_id),
+        ''
+    ) IS NOT NULL
+
+    GROUP BY
+        lower(t.platform),
+        c.author_id
+)
+
+SELECT
+    platform,
+    author_id,
+    actor_name,
+    actor_url,
+    comment_count,
+    last_seen_at,
+
+    CASE
+        WHEN platform = 'instagram'
+         AND actor_url ~* 'instagram\.com/'
+            THEN regexp_replace(
+                actor_url,
+                '^https?://(www\.)?instagram\.com/([^/?#]+)/?.*$',
+                '\2',
+                'i'
+            )
+
+        ELSE NULL
+    END AS resolved_handle,
+
+    CASE
+        WHEN platform = 'facebook'
+         AND actor_url ~* 'facebook\.com/'
+            THEN actor_url
+
+        WHEN platform = 'facebook'
+         AND author_id ~ '^[0-9]+$'
+            THEN author_id
+
+        WHEN platform = 'instagram'
+         AND actor_url ~* 'instagram\.com/'
+            THEN regexp_replace(
+                actor_url,
+                '^https?://(www\.)?instagram\.com/([^/?#]+)/?.*$',
+                '\2',
+                'i'
+            )
+
+        ELSE NULL
+    END AS monitoring_key,
+
+    CASE
+        WHEN platform = 'facebook'
+         AND actor_url ~* 'facebook\.com/'
+            THEN 'direct_url'
+
+        WHEN platform = 'facebook'
+         AND author_id ~ '^[0-9]+$'
+            THEN 'candidate_page_id'
+
+        WHEN platform = 'facebook'
+         AND author_id LIKE 'pfbid%'
+            THEN 'unresolved_pfbid'
+
+        WHEN platform = 'instagram'
+         AND actor_url ~* 'instagram\.com/'
+            THEN 'direct_handle'
+
+        ELSE 'unsupported'
+    END AS monitoring_status
+
+FROM actors
+
+ORDER BY
+    platform,
+    monitoring_status,
+    comment_count DESC,
+    actor_name;

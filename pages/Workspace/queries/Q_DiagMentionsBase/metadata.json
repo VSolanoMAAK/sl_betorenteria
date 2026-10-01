@@ -1,0 +1,35 @@
+{
+  "gitSyncId": "6a9b555e277a9d17c2bbaffc_80a6e876-21de-4857-892e-64bd40e860e1",
+  "id": "Workspace_Q_DiagMentionsBase",
+  "pluginId": "postgres-plugin",
+  "pluginType": "DB",
+  "unpublishedAction": {
+    "actionConfiguration": {
+      "body": "WITH tenant_ctx AS (\n    SELECT\n        u.tenant_id\n    FROM public.sl_users u\n    WHERE lower(u.email) =\n          lower({{ appsmith.store.userEmail || \"\" }})\n      AND u.is_active = TRUE\n    LIMIT 1\n),\n\nlatest_profiles AS (\n    SELECT DISTINCT ON (\n        s.tenant_id,\n        s.target_id\n    )\n        s.tenant_id,\n        s.target_id,\n        s.username,\n        s.display_name,\n        s.profile_url,\n        s.avatar_url\n    FROM public.sl_target_profile_snapshots s\n    JOIN tenant_ctx tc\n      ON tc.tenant_id = s.tenant_id\n    ORDER BY\n        s.tenant_id,\n        s.target_id,\n        s.last_observed_at DESC\n),\n\nclient_profiles AS (\n    SELECT\n        t.id AS target_id,\n        t.platform,\n        NULLIF(btrim(t.handle), '') AS target_handle,\n        NULLIF(btrim(lp.username), '') AS profile_username,\n        NULLIF(btrim(lp.display_name), '') AS profile_display_name,\n        lp.profile_url,\n        lp.avatar_url\n    FROM public.sl_monitored_targets t\n    JOIN tenant_ctx tc\n      ON tc.tenant_id = t.tenant_id\n    LEFT JOIN latest_profiles lp\n      ON lp.tenant_id = t.tenant_id\n     AND lp.target_id = t.id\n    WHERE t.status = 'active'\n),\n\nactors AS (\n    SELECT\n        c.author_id,\n        max(NULLIF(btrim(c.author_name), '')) AS actor_name,\n        max(NULLIF(btrim(c.author_url), '')) AS actor_url,\n        count(*) AS comment_count\n    FROM public.sl_comments c\n    JOIN tenant_ctx tc\n      ON tc.tenant_id = c.tenant_id\n    WHERE NULLIF(btrim(c.author_id), '') IS NOT NULL\n    GROUP BY\n        c.author_id\n),\n\ncomment_client_mentions AS (\n    SELECT\n        c.id AS comment_id,\n        c.author_id,\n        c.author_name,\n        c.post_id,\n        c.published_at,\n        cp.target_id,\n        cp.platform,\n        cp.target_handle,\n        cp.profile_username,\n        cp.profile_display_name,\n\n        CASE\n            WHEN cp.target_handle IS NOT NULL\n             AND strpos(\n                    lower(COALESCE(c.content_text, '')),\n                    '@' || lower(cp.target_handle)\n                 ) > 0\n                THEN 'handle'\n\n            WHEN cp.profile_username IS NOT NULL\n             AND strpos(\n                    lower(COALESCE(c.content_text, '')),\n                    '@' || lower(cp.profile_username)\n                 ) > 0\n                THEN 'username'\n\n            WHEN cp.profile_display_name IS NOT NULL\n             AND length(cp.profile_display_name) >= 4\n             AND strpos(\n                    lower(COALESCE(c.content_text, '')),\n                    lower(cp.profile_display_name)\n                 ) > 0\n                THEN 'display_name'\n\n            ELSE NULL\n        END AS match_type\n\n    FROM public.sl_comments c\n    JOIN tenant_ctx tc\n      ON tc.tenant_id = c.tenant_id\n    CROSS JOIN client_profiles cp\n),\n\npost_actor_references AS (\n    SELECT\n        p.id AS post_id,\n        p.target_id,\n        p.published_at,\n        a.author_id,\n        a.actor_name,\n\n        CASE\n            WHEN a.actor_name IS NOT NULL\n             AND length(a.actor_name) >= 4\n             AND strpos(\n                    lower(COALESCE(p.content_text, '')),\n                    lower(a.actor_name)\n                 ) > 0\n                THEN TRUE\n            ELSE FALSE\n        END AS actor_name_found\n\n    FROM public.sl_social_posts p\n    JOIN tenant_ctx tc\n      ON tc.tenant_id = p.tenant_id\n    CROSS JOIN actors a\n),\n\ncomment_stats AS (\n    SELECT\n        count(*) AS total_comments,\n\n        count(*) FILTER (\n            WHERE strpos(\n                COALESCE(content_text, ''),\n                '@'\n            ) > 0\n        ) AS comments_with_at_sign\n\n    FROM public.sl_comments c\n    JOIN tenant_ctx tc\n      ON tc.tenant_id = c.tenant_id\n),\n\npost_stats AS (\n    SELECT\n        count(*) AS total_posts,\n\n        count(*) FILTER (\n            WHERE strpos(\n                COALESCE(content_text, ''),\n                '@'\n            ) > 0\n        ) AS posts_with_at_sign\n\n    FROM public.sl_social_posts p\n    JOIN tenant_ctx tc\n      ON tc.tenant_id = p.tenant_id\n)\n\nSELECT\n    (SELECT count(*) FROM client_profiles)\n        AS client_profiles,\n\n    (SELECT count(*) FROM actors)\n        AS unique_actors,\n\n    (SELECT total_comments FROM comment_stats)\n        AS total_comments,\n\n    (SELECT comments_with_at_sign FROM comment_stats)\n        AS comments_with_at_sign,\n\n    (\n        SELECT count(*)\n        FROM comment_client_mentions\n        WHERE match_type IS NOT NULL\n    ) AS comments_referencing_client_profile,\n\n    (\n        SELECT count(DISTINCT author_id)\n        FROM comment_client_mentions\n        WHERE match_type IS NOT NULL\n          AND author_id IS NOT NULL\n    ) AS actors_referencing_client_profile,\n\n    (SELECT total_posts FROM post_stats)\n        AS total_posts,\n\n    (SELECT posts_with_at_sign FROM post_stats)\n        AS posts_with_at_sign,\n\n    (\n        SELECT count(*)\n        FROM post_actor_references\n        WHERE actor_name_found = TRUE\n    ) AS client_posts_referencing_known_actor;",
+      "encodeParamsToggle": true,
+      "paginationType": "NONE",
+      "pluginSpecifiedTemplates": [
+        {
+          "value": true
+        }
+      ],
+      "timeoutInMillisecond": 10000
+    },
+    "confirmBeforeExecute": false,
+    "datasource": {
+      "id": "SL_Listening",
+      "isAutoGenerated": false,
+      "name": "SL_Listening",
+      "pluginId": "postgres-plugin"
+    },
+    "dynamicBindingPathList": [
+      {
+        "key": "body"
+      }
+    ],
+    "name": "Q_DiagMentionsBase",
+    "pageId": "Workspace",
+    "runBehaviour": "MANUAL",
+    "userSetOnLoad": false
+  }
+}
