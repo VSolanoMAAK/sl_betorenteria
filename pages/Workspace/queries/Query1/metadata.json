@@ -5,7 +5,7 @@
   "pluginType": "DB",
   "unpublishedAction": {
     "actionConfiguration": {
-      "body": "function formatDrawerMetric(value) {\n    if (\n        value === null ||\n        value === undefined ||\n        value === ''\n    ) {\n        return '—';\n    }\n\n    var number = Number(value);\n\n    if (!isFinite(number)) {\n        return '—';\n    }\n\n    try {\n        return new Intl.NumberFormat('es-MX').format(number);\n    } catch (error) {\n        return String(number);\n    }\n}",
+      "body": "WITH params AS (\n    SELECT\n        u.tenant_id,\n\n        NULLIF(\n            {{\n                CW_Constructor.model.selectedQueryId\n                || appsmith.store.selectedQueryId\n                || appsmith.store.activeQueryId\n                || \"\"\n            }},\n            ''\n        )::uuid AS query_id\n\n    FROM public.sl_users u\n\n    WHERE lower(u.email) =\n          lower(\n              {{\n                  appsmith.store.userEmail\n                  || \"\"\n              }}\n          )\n\n      AND u.is_active = TRUE\n\n    LIMIT 1\n),\n\nlatest_instagram AS (\n    SELECT\n        p.id AS post_id,\n        p.external_post_id,\n        p.post_type,\n        p.published_at,\n        p.provider_payload\n\n    FROM params prm\n\n    JOIN public.sl_query_social_posts qsp\n      ON qsp.tenant_id = prm.tenant_id\n     AND qsp.query_id = prm.query_id\n     AND qsp.is_active = TRUE\n\n    JOIN public.sl_social_posts p\n      ON p.tenant_id = qsp.tenant_id\n     AND p.id = qsp.post_id\n\n    JOIN public.sl_monitored_targets t\n      ON t.tenant_id = p.tenant_id\n     AND t.id = p.target_id\n\n    WHERE lower(t.platform) = 'instagram'\n\n    ORDER BY\n        p.published_at DESC NULLS LAST,\n        p.id\n\n    LIMIT 1\n)\n\nSELECT\n    li.post_id,\n    li.external_post_id,\n    li.post_type,\n    li.published_at,\n\n    (\n        SELECT jsonb_agg(k.key ORDER BY k.key)\n\n        FROM jsonb_object_keys(\n            COALESCE(\n                li.provider_payload,\n                '{}'::jsonb\n            )\n        ) AS k(key)\n    ) AS top_level_keys,\n\n    jsonb_typeof(\n        li.provider_payload\n    ) AS payload_type,\n\n    jsonb_pretty(\n        COALESCE(\n            li.provider_payload,\n            '{}'::jsonb\n        )\n    ) AS provider_payload_pretty\n\nFROM latest_instagram li;",
       "encodeParamsToggle": true,
       "paginationType": "NONE",
       "pluginSpecifiedTemplates": [
@@ -22,7 +22,11 @@
       "name": "SL_Listening",
       "pluginId": "postgres-plugin"
     },
-    "dynamicBindingPathList": [],
+    "dynamicBindingPathList": [
+      {
+        "key": "body"
+      }
+    ],
     "name": "Query1",
     "pageId": "Workspace",
     "runBehaviour": "MANUAL",

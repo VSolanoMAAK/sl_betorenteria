@@ -1,58 +1,126 @@
-WITH auth_ctx AS (
+WITH params AS (
     SELECT
-        u.tenant_id
+        u.tenant_id,
+
+        NULLIF(
+            {{
+                CW_Constructor.model.selectedQueryId
+                || appsmith.store.selectedQueryId
+                || appsmith.store.activeQueryId
+                || ""
+            }},
+            ''
+        )::uuid AS query_id
+
     FROM public.sl_users u
-    WHERE LOWER(u.email) = LOWER({{ appsmith.store.userEmail }})
+
+    WHERE lower(u.email) =
+          lower(
+              {{
+                  appsmith.store.userEmail
+                  || ""
+              }}
+          )
+
       AND u.is_active = TRUE
+
     LIMIT 1
+),
+
+base_posts AS (
+    SELECT
+        qsp.tenant_id,
+        qsp.query_id,
+        qsp.post_id,
+        qsp.matched_at,
+        qsp.last_confirmed_at,
+
+        p.target_id,
+        p.external_post_id,
+        p.content_text,
+        p.published_at,
+        p.scraped_at,
+        p.post_url,
+        p.post_type,
+
+        t.platform,
+        t.handle
+
+    FROM public.sl_query_social_posts qsp
+
+    JOIN params prm
+      ON prm.tenant_id = qsp.tenant_id
+     AND prm.query_id = qsp.query_id
+
+    JOIN public.sl_social_posts p
+      ON p.tenant_id = qsp.tenant_id
+     AND p.id = qsp.post_id
+
+    JOIN public.sl_monitored_targets t
+      ON t.tenant_id = p.tenant_id
+     AND t.id = p.target_id
+
+    WHERE qsp.is_active = TRUE
 )
 
 SELECT
-    qsp.id AS query_social_post_id,
-    qsp.query_id,
-    qsp.post_id,
-    qsp.first_matched_run_id,
-    qsp.last_confirmed_run_id,
-    qsp.matched_at,
-    qsp.last_confirmed_at,
-    qsp.match_type,
-    qsp.match_details,
-    qsp.definition_hash,
+    bp.query_id,
+    bp.post_id,
+    bp.target_id,
 
-    sp.target_id,
-    sp.external_post_id,
-    sp.content_text,
-    sp.published_at,
-    sp.scraped_at,
-    sp.post_url,
-    sp.post_type,
+    bp.matched_at,
+    bp.last_confirmed_at,
 
-    mt.platform,
-    mt.handle,
-    mt.external_profile_id,
+    bp.platform,
+    bp.handle,
 
-    COALESCE(metrics.likes_count, 0) AS likes_count,
-    COALESCE(metrics.comments_count, 0) AS platform_comments_count,
-    COALESCE(metrics.shares_count, 0) AS shares_count,
-    COALESCE(metrics.views_count, 0) AS views_count,
-    metrics.fetched_at AS metrics_fetched_at,
-    metrics.last_observed_at AS metrics_last_observed_at,
+    bp.external_post_id,
+    bp.content_text,
+    bp.published_at,
+    bp.scraped_at,
+    bp.post_url,
+    bp.post_type,
 
-    COALESCE(comments.stored_comments_count, 0) AS stored_comments_count
+    metric.likes_count,
+    metric.comments_count AS platform_comments_count,
+    metric.shares_count,
+    metric.views_count,
 
-FROM auth_ctx a
+    metric.fetched_at AS metrics_fetched_at,
+    metric.last_observed_at AS metrics_last_observed_at,
 
-JOIN public.sl_query_social_posts qsp
-    ON qsp.tenant_id = a.tenant_id
-   AND qsp.is_active = TRUE
+    COALESCE(
+        comments.stored_comments_count,
+        0
+    ) AS stored_comments_count,
 
-JOIN public.sl_social_posts sp
-    ON sp.id = qsp.post_id
-   AND sp.tenant_id = qsp.tenant_id
+    COALESCE(
+        media.media,
+        '[]'::jsonb
+    ) AS media,
 
-JOIN public.sl_monitored_targets mt
-    ON mt.id = sp.target_id
-   AND mt.tenant_id = qsp.tenant_id
+    profile.username AS profile_username,
+    profile.display_name AS profile_display_name,
+    profile.profile_url,
+    profile.location_text AS profile_location_text,
+
+    profile.followers_count,
+    profile.following_count,
+    profile.posts_count AS profile_posts_count,
+
+    profile.is_verified AS profile_is_verified,
+    profile.avatar_url AS profile_avatar_url,
+    profile.category AS profile_category,
+
+    profile.first_observed_at AS profile_first_observed_at,
+    profile.last_observed_at AS profile_last_observed_at
+
+FROM base_posts bp
+
+
+/* =========================================================
+   ÚLTIMA MÉTRICA OBSERVADA
+   ========================================================= */
 
 LEFT JOIN LATERAL (
     SELECT
@@ -62,30 +130,136 @@ LEFT JOIN LATERAL (
         m.views_count,
         m.fetched_at,
         m.last_observed_at
+
     FROM public.sl_post_metrics m
-    WHERE m.tenant_id = qsp.tenant_id
-      AND m.post_id = sp.id
+
+    WHERE m.tenant_id = bp.tenant_id
+      AND m.post_id = bp.post_id
+
     ORDER BY
-        m.last_observed_at DESC NULLS LAST,
-        m.fetched_at DESC
+        m.last_observed_at DESC,
+        m.fetched_at DESC,
+        m.id DESC
+
     LIMIT 1
-) metrics
-    ON TRUE
+) metric
+ON TRUE
+
+
+/* =========================================================
+   COMENTARIOS PERSISTIDOS
+   ========================================================= */
 
 LEFT JOIN LATERAL (
     SELECT
         COUNT(*)::bigint AS stored_comments_count
-    FROM public.sl_comments c
-    WHERE c.tenant_id = qsp.tenant_id
-      AND c.post_id = sp.id
-) comments
-    ON TRUE
 
-WHERE qsp.query_id =
-    {{ CW_Constructor.model.selectedQueryId || CW_Constructor.model.activeQueryId }}::uuid
+    FROM public.sl_comments c
+
+    WHERE c.tenant_id = bp.tenant_id
+      AND c.post_id = bp.post_id
+) comments
+ON TRUE
+
+
+/* =========================================================
+   MEDIA 1:N AGREGADA SIN DUPLICAR POSTS
+   ========================================================= */
+
+LEFT JOIN LATERAL (
+    SELECT
+        jsonb_agg(
+            jsonb_build_object(
+                'provider_code',
+                    pm.provider_code,
+
+                'media_index',
+                    pm.media_index,
+
+                'external_media_id',
+                    pm.external_media_id,
+
+                'media_type',
+                    pm.media_type,
+
+                'media_url',
+                    pm.media_url,
+
+                'preview_url',
+                    pm.preview_url,
+
+                'width',
+                    pm.width,
+
+                'height',
+                    pm.height,
+
+                'duration_ms',
+                    pm.duration_ms,
+
+                'has_audio',
+                    pm.has_audio,
+
+                'is_primary',
+                    pm.is_primary,
+
+                'metadata',
+                    pm.metadata,
+
+                'last_observed_at',
+                    pm.last_observed_at
+            )
+
+            ORDER BY
+                pm.media_index ASC,
+                pm.id ASC
+        ) AS media
+
+    FROM public.sl_post_media pm
+
+    WHERE pm.tenant_id = bp.tenant_id
+      AND pm.post_id = bp.post_id
+) media
+ON TRUE
+
+
+/* =========================================================
+   ÚLTIMO SNAPSHOT DEL PERFIL
+   ========================================================= */
+
+LEFT JOIN LATERAL (
+    SELECT
+        ps.username,
+        ps.display_name,
+        ps.profile_url,
+        ps.location_text,
+
+        ps.followers_count,
+        ps.following_count,
+        ps.posts_count,
+
+        ps.is_verified,
+        ps.avatar_url,
+        ps.category,
+
+        ps.first_observed_at,
+        ps.last_observed_at
+
+    FROM public.sl_target_profile_snapshots ps
+
+    WHERE ps.tenant_id = bp.tenant_id
+      AND ps.target_id = bp.target_id
+
+    ORDER BY
+        ps.last_observed_at DESC,
+        ps.id DESC
+
+    LIMIT 1
+) profile
+ON TRUE
+
 
 ORDER BY
-    sp.published_at DESC NULLS LAST,
-    sp.scraped_at DESC
-
-LIMIT 100;
+    bp.published_at DESC NULLS LAST,
+    bp.matched_at DESC,
+    bp.post_id;

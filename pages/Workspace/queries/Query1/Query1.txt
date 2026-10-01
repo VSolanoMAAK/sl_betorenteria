@@ -1,21 +1,90 @@
-function formatDrawerMetric(value) {
-    if (
-        value === null ||
-        value === undefined ||
-        value === ''
-    ) {
-        return '—';
-    }
+WITH params AS (
+    SELECT
+        u.tenant_id,
 
-    var number = Number(value);
+        NULLIF(
+            {{
+                CW_Constructor.model.selectedQueryId
+                || appsmith.store.selectedQueryId
+                || appsmith.store.activeQueryId
+                || ""
+            }},
+            ''
+        )::uuid AS query_id
 
-    if (!isFinite(number)) {
-        return '—';
-    }
+    FROM public.sl_users u
 
-    try {
-        return new Intl.NumberFormat('es-MX').format(number);
-    } catch (error) {
-        return String(number);
-    }
-}
+    WHERE lower(u.email) =
+          lower(
+              {{
+                  appsmith.store.userEmail
+                  || ""
+              }}
+          )
+
+      AND u.is_active = TRUE
+
+    LIMIT 1
+),
+
+latest_instagram AS (
+    SELECT
+        p.id AS post_id,
+        p.external_post_id,
+        p.post_type,
+        p.published_at,
+        p.provider_payload
+
+    FROM params prm
+
+    JOIN public.sl_query_social_posts qsp
+      ON qsp.tenant_id = prm.tenant_id
+     AND qsp.query_id = prm.query_id
+     AND qsp.is_active = TRUE
+
+    JOIN public.sl_social_posts p
+      ON p.tenant_id = qsp.tenant_id
+     AND p.id = qsp.post_id
+
+    JOIN public.sl_monitored_targets t
+      ON t.tenant_id = p.tenant_id
+     AND t.id = p.target_id
+
+    WHERE lower(t.platform) = 'instagram'
+
+    ORDER BY
+        p.published_at DESC NULLS LAST,
+        p.id
+
+    LIMIT 1
+)
+
+SELECT
+    li.post_id,
+    li.external_post_id,
+    li.post_type,
+    li.published_at,
+
+    (
+        SELECT jsonb_agg(k.key ORDER BY k.key)
+
+        FROM jsonb_object_keys(
+            COALESCE(
+                li.provider_payload,
+                '{}'::jsonb
+            )
+        ) AS k(key)
+    ) AS top_level_keys,
+
+    jsonb_typeof(
+        li.provider_payload
+    ) AS payload_type,
+
+    jsonb_pretty(
+        COALESCE(
+            li.provider_payload,
+            '{}'::jsonb
+        )
+    ) AS provider_payload_pretty
+
+FROM latest_instagram li;
