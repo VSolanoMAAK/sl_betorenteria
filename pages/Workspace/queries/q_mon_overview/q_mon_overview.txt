@@ -2,12 +2,12 @@ WITH latest_metrics AS (
     SELECT DISTINCT ON (pm.post_id)
         pm.post_id,
         pm.tenant_id,
-        COALESCE(pm.likes_count, 0)    AS likes_count,
+        COALESCE(pm.likes_count, 0) AS likes_count,
         COALESCE(pm.comments_count, 0) AS comments_count,
-        COALESCE(pm.shares_count, 0)   AS shares_count,
-        COALESCE(pm.views_count, 0)    AS views_count,
-        COALESCE(pm.reposts_count, 0)  AS reposts_count,
-        COALESCE(pm.quotes_count, 0)   AS quotes_count,
+        COALESCE(pm.shares_count, 0) AS shares_count,
+        COALESCE(pm.views_count, 0) AS views_count,
+        COALESCE(pm.reposts_count, 0) AS reposts_count,
+        COALESCE(pm.quotes_count, 0) AS quotes_count,
         pm.fetched_at
     FROM public.sl_post_metrics pm
     WHERE pm.tenant_id =

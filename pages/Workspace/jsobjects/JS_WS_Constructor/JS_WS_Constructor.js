@@ -2,25 +2,87 @@ export default {
 
   loadData: async function () {
     try {
-      const results =
-        await Promise.all([
-          q_ws_list_queries.run(),
-          q_ws_list_targets.run()
-        ]);
+
+      let queries = [];
+      let targets = [];
+
+
+      /*
+       * q_ws_list_queries puede ser una Query
+       * ejecutable o un objeto que ya expone
+       * sus datos.
+       *
+       * Si tiene run(), se ejecuta.
+       * Si no, se utiliza data sin provocar
+       * un error falso.
+       */
+      if (
+        q_ws_list_queries &&
+        typeof q_ws_list_queries.run === 'function'
+      ) {
+        const result =
+          await q_ws_list_queries.run();
+
+        queries =
+          Array.isArray(result)
+            ? result
+            : [];
+
+      } else if (
+        q_ws_list_queries &&
+        Array.isArray(q_ws_list_queries.data)
+      ) {
+        queries =
+          q_ws_list_queries.data;
+      }
+
+
+      /*
+       * Mismo tratamiento defensivo para
+       * el catálogo de objetivos.
+       */
+      if (
+        q_ws_list_targets &&
+        typeof q_ws_list_targets.run === 'function'
+      ) {
+        const result =
+          await q_ws_list_targets.run();
+
+        targets =
+          Array.isArray(result)
+            ? result
+            : [];
+
+      } else if (
+        q_ws_list_targets &&
+        Array.isArray(q_ws_list_targets.data)
+      ) {
+        targets =
+          q_ws_list_targets.data;
+      }
+
 
       return {
         queries:
-          results[0] || [],
+          queries,
 
         targets:
-          results[1] || []
+          targets
       };
 
     } catch (error) {
 
+      const message =
+        String(
+          error &&
+          error.message
+            ? error.message
+            : error
+        );
+
       showAlert(
         'Error cargando el Constructor: ' +
-          error.message,
+          message,
         'error'
       );
 
@@ -33,6 +95,7 @@ export default {
     let result;
 
     try {
+
       result =
         await q_ws_create_query.run();
 
@@ -58,6 +121,7 @@ export default {
 
         return null;
       }
+
 
       showAlert(
         'Error guardando la consulta: ' +
@@ -119,11 +183,12 @@ export default {
      * La consulta recién creada pasa a ser
      * la consulta seleccionada actual.
      *
-     * Se conservan también activeQueryId /
-     * activeQueryName como compatibilidad
+     * Se mantienen también activeQueryId /
+     * activeQueryName por compatibilidad
      * con componentes anteriores.
      */
     try {
+
       await Promise.all([
         storeValue(
           'selectedQueryId',
@@ -146,8 +211,6 @@ export default {
         )
       ]);
 
-      await q_ws_list_queries.run();
-
     } catch (error) {
 
       const message =
@@ -155,11 +218,11 @@ export default {
           error &&
           error.message
             ? error.message
-            : ''
+            : error
         );
 
       showAlert(
-        'La consulta fue guardada, pero no fue posible actualizar su selección: ' +
+        'La consulta fue guardada, pero no fue posible guardar su selección local: ' +
           message,
         'warning'
       );
@@ -169,25 +232,73 @@ export default {
 
 
     /*
-     * Una consulta WEB activa debe ejecutar
+     * Refrescar el listado solamente cuando
+     * q_ws_list_queries sea realmente una
+     * Query/API ejecutable.
+     *
+     * NO convertir un problema de refresco
+     * en un supuesto fallo de creación.
+     */
+    try {
+
+      if (
+        q_ws_list_queries &&
+        typeof q_ws_list_queries.run === 'function'
+      ) {
+        await q_ws_list_queries.run();
+      }
+
+    } catch (error) {
+
+      console.error(
+        'La consulta fue creada correctamente, pero el listado no pudo refrescarse:',
+        error
+      );
+    }
+
+
+    /*
+     * Una consulta WEB activa ejecuta
      * inmediatamente su primera búsqueda.
      *
-     * La creación de la consulta ya generó:
+     * La creación de la consulta ya genera:
      *
      * - sl_web_keywords
      * - sl_query_web_keywords
      *
      * por lo que q_ws_web_search_v2 puede
-     * trabajar inmediatamente con queryId.
+     * trabajar con queryId.
      */
     if (
       useWeb &&
       queryStatus === 'active'
     ) {
       try {
+
+        if (
+          !q_ws_web_search_v2 ||
+          typeof q_ws_web_search_v2.run !== 'function'
+        ) {
+          throw new Error(
+            'q_ws_web_search_v2 no está disponible como acción ejecutable.'
+          );
+        }
+
+
         await q_ws_web_search_v2.run();
 
-        await q_ws_list_web_mentions.run();
+
+        /*
+         * Refrescar menciones WEB solamente
+         * si la acción expone run().
+         */
+        if (
+          q_ws_list_web_mentions &&
+          typeof q_ws_list_web_mentions.run === 'function'
+        ) {
+          await q_ws_list_web_mentions.run();
+        }
+
 
         showAlert(
           'Consulta guardada y búsqueda web inicial ejecutada correctamente.',
@@ -201,13 +312,13 @@ export default {
             error &&
             error.message
               ? error.message
-              : ''
+              : error
           );
 
         /*
          * La consulta YA fue guardada.
-         * Un fallo de Tavily no debe presentarse
-         * como un fallo de creación.
+         * Un fallo de búsqueda WEB no debe
+         * presentarse como fallo de creación.
          */
         showAlert(
           'La consulta fue guardada correctamente, pero la búsqueda web inicial falló: ' +
@@ -215,6 +326,7 @@ export default {
           'warning'
         );
       }
+
 
       return row;
     }
