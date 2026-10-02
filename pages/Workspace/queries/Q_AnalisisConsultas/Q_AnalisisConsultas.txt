@@ -1,0 +1,31 @@
+WITH user_context AS (
+    SELECT
+        u.tenant_id
+
+    FROM public.sl_users u
+
+    WHERE lower(u.email) =
+          lower(
+              {{ appsmith.store.userEmail }}::text
+          )
+
+      AND u.is_active = TRUE
+
+    LIMIT 1
+)
+
+SELECT
+    q.id,
+    q.name,
+    q.status
+
+FROM public.sl_queries q
+
+JOIN user_context uc
+  ON uc.tenant_id = q.tenant_id
+
+WHERE q.status = 'active'
+
+ORDER BY
+    lower(q.name),
+    q.id;

@@ -17,6 +17,18 @@ export default {
           .trim()
           .toLowerCase();
 
+      const rawSelectedQueryId =
+        String(
+          widgetModel.selectedQueryId || ''
+        )
+          .trim();
+
+      const rawSelectedQueryName =
+        String(
+          widgetModel.selectedQueryName || ''
+        )
+          .trim();
+
       const allowedPlatforms = [
         'all',
         'facebook',
@@ -37,7 +49,13 @@ export default {
             rawPlatform
           )
             ? rawPlatform
-            : 'all'
+            : 'all',
+
+        selectedQueryId:
+          rawSelectedQueryId,
+
+        selectedQueryName:
+          rawSelectedQueryName
       };
 
       await storeValue(
@@ -49,6 +67,8 @@ export default {
       await storeValue(
         'analisisRuntime',
         {
+          queries: [],
+
           estado: null,
           palancas: [],
           formatos: [],
@@ -64,6 +84,41 @@ export default {
         false
       );
 
+      const queryResult =
+        await Q_AnalisisConsultas.run();
+
+      const queries =
+        Array.isArray(queryResult)
+          ? queryResult
+          : [];
+
+      const selectedQuery =
+        queries.find(
+          (query) =>
+            String(
+              query.id || ''
+            ) ===
+            rawSelectedQueryId
+        ) || null;
+
+      if (selectedQuery) {
+        filters.selectedQueryId =
+          String(
+            selectedQuery.id || ''
+          );
+
+        filters.selectedQueryName =
+          String(
+            selectedQuery.name || ''
+          );
+
+        await storeValue(
+          'analisisFilters',
+          filters,
+          false
+        );
+      }
+
       const results =
         await Promise.all([
           Q_AnalisisEstado.run(),
@@ -73,6 +128,9 @@ export default {
         ]);
 
       const payload = {
+        queries:
+          queries,
+
         estado:
           Array.isArray(results[0]) &&
           results[0].length > 0
@@ -128,6 +186,8 @@ export default {
       await storeValue(
         'analisisRuntime',
         {
+          queries: [],
+
           estado: null,
           palancas: [],
           formatos: [],
