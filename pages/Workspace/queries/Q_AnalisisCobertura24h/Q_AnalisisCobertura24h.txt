@@ -1,0 +1,229 @@
+WITH params AS (
+    SELECT
+        {{ CW_Analisis.model.selectedQueryId }}::uuid
+            AS query_id,
+
+        lower(
+            COALESCE(
+                NULLIF(
+                    {{ CW_Analisis.model.platform }}::text,
+                    ''
+                ),
+                'all'
+            )
+        ) AS selected_platform,
+
+        lower(
+            {{ appsmith.store.userEmail }}::text
+        ) AS user_email
+),
+
+query_context AS (
+    SELECT
+        q.tenant_id,
+        q.id AS query_id,
+        p.selected_platform
+
+    FROM params p
+
+    JOIN public.sl_users u
+      ON lower(u.email) = p.user_email
+     AND u.is_active = TRUE
+
+    JOIN public.sl_queries q
+      ON q.tenant_id = u.tenant_id
+     AND q.id = p.query_id
+
+    LIMIT 1
+),
+
+matched_posts AS (
+    SELECT
+        qc.tenant_id,
+        qc.query_id,
+
+        sp.id AS post_id,
+
+        lower(mt.platform)
+            AS platform,
+
+        COALESCE(
+            sp.published_at,
+            sp.scraped_at
+        ) AS event_at,
+
+        COALESCE(
+            sp.published_at,
+            sp.scraped_at
+        ) + INTERVAL '24 hours'
+            AS target_metric_at
+
+    FROM query_context qc
+
+    JOIN public.sl_query_social_posts qsp
+      ON qsp.tenant_id = qc.tenant_id
+     AND qsp.query_id = qc.query_id
+     AND qsp.is_active = TRUE
+
+    JOIN public.sl_social_posts sp
+      ON sp.tenant_id = qsp.tenant_id
+     AND sp.id = qsp.post_id
+
+    JOIN public.sl_monitored_targets mt
+      ON mt.tenant_id = sp.tenant_id
+     AND mt.id = sp.target_id
+
+    WHERE
+        (
+            qc.selected_platform = 'all'
+            OR lower(mt.platform) =
+               qc.selected_platform
+        )
+
+        AND COALESCE(
+            sp.published_at,
+            sp.scraped_at
+        ) <=
+            CURRENT_TIMESTAMP
+            - INTERVAL '24 hours'
+),
+
+with_snapshot AS (
+    SELECT
+        mp.*,
+
+        m24.fetched_at
+            AS metric_24h_at,
+
+        m24.likes_count,
+        m24.comments_count,
+        m24.shares_count,
+        m24.views_count,
+
+        CASE
+            WHEN m24.fetched_at IS NULL
+                THEN NULL
+
+            ELSE ABS(
+                EXTRACT(
+                    EPOCH FROM (
+                        m24.fetched_at
+                        - mp.target_metric_at
+                    )
+                )
+            ) / 3600.0
+        END AS distance_hours
+
+    FROM matched_posts mp
+
+    LEFT JOIN LATERAL (
+        SELECT
+            m.fetched_at,
+            m.likes_count,
+            m.comments_count,
+            m.shares_count,
+            m.views_count
+
+        FROM public.sl_post_metrics m
+
+        WHERE m.tenant_id = mp.tenant_id
+          AND m.post_id = mp.post_id
+
+        ORDER BY
+            ABS(
+                EXTRACT(
+                    EPOCH FROM (
+                        m.fetched_at
+                        - mp.target_metric_at
+                    )
+                )
+            ),
+            m.fetched_at
+
+        LIMIT 1
+    ) m24
+      ON TRUE
+)
+
+SELECT
+    CASE
+        WHEN GROUPING(platform) = 1
+            THEN 'all'
+        ELSE platform
+    END AS platform,
+
+    COUNT(*)::bigint
+        AS eligible_posts,
+
+    COUNT(metric_24h_at)::bigint
+        AS posts_with_any_snapshot,
+
+    COUNT(*) FILTER (
+        WHERE distance_hours <= 3
+    )::bigint
+        AS posts_with_snapshot_within_3h,
+
+    COUNT(*) FILTER (
+        WHERE distance_hours <= 6
+    )::bigint
+        AS posts_with_snapshot_within_6h,
+
+    COUNT(*) FILTER (
+        WHERE distance_hours <= 12
+    )::bigint
+        AS posts_with_snapshot_within_12h,
+
+    ROUND(
+        100.0
+        * COUNT(*) FILTER (
+            WHERE distance_hours <= 6
+        )
+        / NULLIF(
+            COUNT(*),
+            0
+        ),
+        2
+    ) AS coverage_within_6h_pct,
+
+    ROUND(
+        AVG(distance_hours)
+            FILTER (
+                WHERE metric_24h_at IS NOT NULL
+            ),
+        2
+    ) AS avg_snapshot_distance_hours,
+
+    ROUND(
+        MAX(distance_hours)
+            FILTER (
+                WHERE metric_24h_at IS NOT NULL
+            ),
+        2
+    ) AS max_snapshot_distance_hours,
+
+    MIN(metric_24h_at)
+        AS earliest_selected_snapshot,
+
+    MAX(metric_24h_at)
+        AS latest_selected_snapshot
+
+FROM with_snapshot
+
+GROUP BY GROUPING SETS (
+    (platform),
+    ()
+)
+
+ORDER BY
+    CASE
+        WHEN
+            CASE
+                WHEN GROUPING(platform) = 1
+                    THEN 'all'
+                ELSE platform
+            END = 'all'
+            THEN 0
+        ELSE 1
+    END,
+
+    platform;

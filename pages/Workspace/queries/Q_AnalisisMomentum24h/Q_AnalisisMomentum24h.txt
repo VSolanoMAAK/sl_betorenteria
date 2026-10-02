@@ -1,0 +1,340 @@
+WITH params AS (
+    SELECT
+        {{ CW_Analisis.model.selectedQueryId }}::uuid
+            AS query_id,
+
+        lower(
+            COALESCE(
+                NULLIF(
+                    {{ CW_Analisis.model.platform }}::text,
+                    ''
+                ),
+                'all'
+            )
+        ) AS selected_platform,
+
+        lower(
+            {{ appsmith.store.userEmail }}::text
+        ) AS user_email
+),
+
+query_context AS (
+    SELECT
+        q.tenant_id,
+        q.id AS query_id,
+        q.name AS query_name,
+        p.selected_platform
+
+    FROM params p
+
+    JOIN public.sl_users u
+      ON lower(u.email) = p.user_email
+     AND u.is_active = TRUE
+
+    JOIN public.sl_queries q
+      ON q.tenant_id = u.tenant_id
+     AND q.id = p.query_id
+
+    LIMIT 1
+),
+
+matched_posts AS (
+    SELECT
+        qc.tenant_id,
+        qc.query_id,
+        qc.query_name,
+
+        sp.id AS post_id,
+        sp.content_text,
+        sp.post_type,
+        sp.post_url,
+        sp.published_at,
+
+        lower(mt.platform) AS platform,
+        mt.handle
+
+    FROM query_context qc
+
+    JOIN public.sl_query_social_posts qsp
+      ON qsp.tenant_id = qc.tenant_id
+     AND qsp.query_id = qc.query_id
+     AND qsp.is_active = TRUE
+
+    JOIN public.sl_social_posts sp
+      ON sp.tenant_id = qsp.tenant_id
+     AND sp.id = qsp.post_id
+
+    JOIN public.sl_monitored_targets mt
+      ON mt.tenant_id = sp.tenant_id
+     AND mt.id = sp.target_id
+
+    WHERE
+        qc.selected_platform = 'all'
+        OR lower(mt.platform) =
+           qc.selected_platform
+),
+
+snapshots AS (
+    SELECT
+        mp.*,
+
+        latest.fetched_at
+            AS latest_metric_at,
+
+        latest.likes_count
+            AS latest_likes,
+
+        latest.comments_count
+            AS latest_comments,
+
+        baseline.fetched_at
+            AS baseline_metric_at,
+
+        baseline.likes_count
+            AS baseline_likes,
+
+        baseline.comments_count
+            AS baseline_comments
+
+    FROM matched_posts mp
+
+    LEFT JOIN LATERAL (
+        SELECT
+            m.fetched_at,
+            m.likes_count,
+            m.comments_count
+
+        FROM public.sl_post_metrics m
+
+        WHERE m.tenant_id = mp.tenant_id
+          AND m.post_id = mp.post_id
+
+        ORDER BY
+            m.fetched_at DESC,
+            m.id DESC
+
+        LIMIT 1
+    ) latest
+      ON TRUE
+
+    LEFT JOIN LATERAL (
+        SELECT
+            m.fetched_at,
+            m.likes_count,
+            m.comments_count
+
+        FROM public.sl_post_metrics m
+
+        WHERE m.tenant_id = mp.tenant_id
+          AND m.post_id = mp.post_id
+
+          AND latest.fetched_at IS NOT NULL
+
+          AND m.fetched_at <
+              latest.fetched_at
+
+        ORDER BY
+            ABS(
+                EXTRACT(
+                    EPOCH FROM (
+                        (
+                            latest.fetched_at
+                            - m.fetched_at
+                        )
+                        - INTERVAL '24 hours'
+                    )
+                )
+            ),
+            m.fetched_at DESC
+
+        LIMIT 1
+    ) baseline
+      ON TRUE
+),
+
+measured AS (
+    SELECT
+        *,
+
+        CASE
+            WHEN latest_metric_at IS NOT NULL
+             AND baseline_metric_at IS NOT NULL
+                THEN
+                    EXTRACT(
+                        EPOCH FROM (
+                            latest_metric_at
+                            - baseline_metric_at
+                        )
+                    ) / 3600.0
+
+            ELSE NULL
+        END AS measurement_hours,
+
+        CASE
+            WHEN latest_likes IS NOT NULL
+             AND baseline_likes IS NOT NULL
+                THEN
+                    latest_likes
+                    - baseline_likes
+
+            ELSE NULL
+        END AS likes_delta,
+
+        CASE
+            WHEN latest_comments IS NOT NULL
+             AND baseline_comments IS NOT NULL
+                THEN
+                    latest_comments
+                    - baseline_comments
+
+            ELSE NULL
+        END AS comments_delta
+
+    FROM snapshots
+),
+
+valid_measurements AS (
+    SELECT
+        *,
+
+        (
+            measurement_hours
+            BETWEEN 18 AND 30
+        ) AS has_valid_24h_window,
+
+        CASE
+            WHEN measurement_hours
+                 BETWEEN 18 AND 30
+
+             AND likes_delta IS NOT NULL
+             AND comments_delta IS NOT NULL
+
+                THEN
+                    likes_delta
+                    + comments_delta
+
+            ELSE NULL
+        END AS interaction_delta
+
+    FROM measured
+),
+
+platform_summary AS (
+    SELECT
+        CASE
+            WHEN GROUPING(platform) = 1
+                THEN 'all'
+            ELSE platform
+        END AS platform,
+
+        COUNT(*)::bigint
+            AS matched_posts,
+
+        COUNT(*) FILTER (
+            WHERE latest_metric_at IS NOT NULL
+        )::bigint
+            AS posts_with_latest_snapshot,
+
+        COUNT(*) FILTER (
+            WHERE baseline_metric_at IS NOT NULL
+        )::bigint
+            AS posts_with_baseline_snapshot,
+
+        COUNT(*) FILTER (
+            WHERE has_valid_24h_window
+        )::bigint
+            AS posts_with_valid_24h_window,
+
+        COUNT(*) FILTER (
+            WHERE has_valid_24h_window
+              AND likes_delta IS NOT NULL
+              AND comments_delta IS NOT NULL
+        )::bigint
+            AS posts_with_comparable_engagement,
+
+        SUM(likes_delta) FILTER (
+            WHERE has_valid_24h_window
+        )::bigint
+            AS likes_growth_24h,
+
+        SUM(comments_delta) FILTER (
+            WHERE has_valid_24h_window
+        )::bigint
+            AS comments_growth_24h,
+
+        SUM(interaction_delta) FILTER (
+            WHERE has_valid_24h_window
+        )::bigint
+            AS interaction_growth_24h,
+
+        ROUND(
+            AVG(interaction_delta) FILTER (
+                WHERE has_valid_24h_window
+            ),
+            2
+        ) AS avg_interaction_growth_per_post_24h,
+
+        ROUND(
+            AVG(measurement_hours) FILTER (
+                WHERE has_valid_24h_window
+            ),
+            2
+        ) AS avg_measurement_hours,
+
+        MIN(latest_metric_at)
+            FILTER (
+                WHERE has_valid_24h_window
+            ) AS oldest_latest_snapshot,
+
+        MAX(latest_metric_at)
+            FILTER (
+                WHERE has_valid_24h_window
+            ) AS newest_latest_snapshot
+
+    FROM valid_measurements
+
+    GROUP BY GROUPING SETS (
+        (platform),
+        ()
+    )
+)
+
+SELECT
+    platform,
+
+    matched_posts,
+
+    posts_with_latest_snapshot,
+    posts_with_baseline_snapshot,
+    posts_with_valid_24h_window,
+    posts_with_comparable_engagement,
+
+    ROUND(
+        100.0
+        * posts_with_valid_24h_window
+        / NULLIF(
+            matched_posts,
+            0
+        ),
+        2
+    ) AS valid_24h_coverage_pct,
+
+    likes_growth_24h,
+    comments_growth_24h,
+    interaction_growth_24h,
+
+    avg_interaction_growth_per_post_24h,
+    avg_measurement_hours,
+
+    oldest_latest_snapshot,
+    newest_latest_snapshot
+
+FROM platform_summary
+
+ORDER BY
+    CASE
+        WHEN platform = 'all'
+            THEN 0
+        ELSE 1
+    END,
+    platform;

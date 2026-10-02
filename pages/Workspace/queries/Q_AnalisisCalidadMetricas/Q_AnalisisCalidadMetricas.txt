@@ -1,0 +1,398 @@
+WITH params AS (
+    SELECT
+        {{ CW_Analisis.model.selectedQueryId }}::uuid
+            AS query_id,
+
+        GREATEST(
+            1,
+            LEAST(
+                {{ CW_Analisis.model.periodDays }}::integer,
+                365
+            )
+        ) AS max_days,
+
+        lower(
+            COALESCE(
+                NULLIF(
+                    {{ CW_Analisis.model.platform }}::text,
+                    ''
+                ),
+                'all'
+            )
+        ) AS selected_platform,
+
+        lower(
+            {{ appsmith.store.userEmail }}::text
+        ) AS user_email
+),
+
+query_context AS (
+    SELECT
+        q.tenant_id,
+        q.id AS query_id,
+        p.max_days,
+        p.selected_platform
+
+    FROM params p
+
+    JOIN public.sl_users u
+      ON lower(u.email) = p.user_email
+     AND u.is_active = TRUE
+
+    JOIN public.sl_queries q
+      ON q.tenant_id = u.tenant_id
+     AND q.id = p.query_id
+
+    LIMIT 1
+),
+
+matched_posts AS (
+    SELECT
+        qc.tenant_id,
+        qc.query_id,
+        qc.max_days,
+        qc.selected_platform,
+
+        sp.id AS post_id,
+        lower(mt.platform) AS platform,
+
+        COALESCE(
+            sp.published_at,
+            sp.scraped_at
+        ) AS event_at
+
+    FROM query_context qc
+
+    JOIN public.sl_query_social_posts qsp
+      ON qsp.tenant_id = qc.tenant_id
+     AND qsp.query_id = qc.query_id
+     AND qsp.is_active = TRUE
+
+    JOIN public.sl_social_posts sp
+      ON sp.tenant_id = qsp.tenant_id
+     AND sp.id = qsp.post_id
+
+    JOIN public.sl_monitored_targets mt
+      ON mt.tenant_id = sp.tenant_id
+     AND mt.id = sp.target_id
+
+    WHERE
+        qc.selected_platform = 'all'
+        OR lower(mt.platform) = qc.selected_platform
+),
+
+platform_history AS (
+    SELECT
+        platform,
+
+        FLOOR(
+            EXTRACT(
+                EPOCH FROM (
+                    CURRENT_TIMESTAMP
+                    - MIN(event_at)
+                )
+            ) / 86400
+        )::integer AS history_days,
+
+        COUNT(*) FILTER (
+            WHERE event_at >=
+                CURRENT_TIMESTAMP
+                - max_days * INTERVAL '1 day'
+        )::bigint AS recent_posts
+
+    FROM matched_posts
+
+    GROUP BY
+        platform,
+        max_days
+),
+
+eligible_platforms AS (
+    SELECT *
+    FROM platform_history
+    WHERE recent_posts > 0
+),
+
+window_choice AS (
+    SELECT
+        CASE
+            WHEN COUNT(*) = 0
+                THEN NULL
+
+            WHEN MIN(history_days) < 2
+                THEN NULL
+
+            ELSE LEAST(
+                (
+                    SELECT max_days
+                    FROM query_context
+                    LIMIT 1
+                ),
+                GREATEST(
+                    1,
+                    FLOOR(
+                        MIN(history_days)::numeric
+                        / 2
+                    )::integer
+                )
+            )
+        END AS comparison_days
+
+    FROM eligible_platforms
+),
+
+post_metrics AS (
+    SELECT
+        mp.platform,
+        mp.post_id,
+        mp.event_at,
+        wc.comparison_days,
+
+        lm.likes_count,
+        lm.comments_count,
+        lm.shares_count,
+        lm.views_count,
+        lm.reposts_count,
+        lm.quotes_count,
+
+        CASE
+            WHEN wc.comparison_days IS NULL
+                THEN NULL
+
+            WHEN mp.event_at >=
+                CURRENT_TIMESTAMP
+                - wc.comparison_days
+                  * INTERVAL '1 day'
+                THEN 'current'
+
+            WHEN mp.event_at >=
+                CURRENT_TIMESTAMP
+                - wc.comparison_days
+                  * 2
+                  * INTERVAL '1 day'
+                THEN 'previous'
+
+            ELSE NULL
+        END AS period_bucket
+
+    FROM matched_posts mp
+
+    CROSS JOIN window_choice wc
+
+    JOIN eligible_platforms ep
+      ON ep.platform = mp.platform
+
+    LEFT JOIN LATERAL (
+        SELECT
+            m.likes_count,
+            m.comments_count,
+            m.shares_count,
+            m.views_count,
+            m.reposts_count,
+            m.quotes_count
+        FROM public.sl_post_metrics m
+        WHERE m.tenant_id = mp.tenant_id
+          AND m.post_id = mp.post_id
+        ORDER BY
+            m.fetched_at DESC NULLS LAST,
+            m.id DESC
+        LIMIT 1
+    ) lm
+      ON TRUE
+),
+
+aggregated AS (
+    SELECT
+        CASE
+            WHEN GROUPING(platform) = 1
+                THEN 'all'
+            ELSE platform
+        END AS platform,
+
+        MAX(comparison_days)
+            AS comparison_days,
+
+        COUNT(*) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint AS current_posts,
+
+        COUNT(*) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint AS previous_posts,
+
+        COUNT(likes_count) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint AS current_likes_available,
+
+        COUNT(likes_count) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint AS previous_likes_available,
+
+        COUNT(comments_count) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint AS current_comments_available,
+
+        COUNT(comments_count) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint AS previous_comments_available,
+
+        COUNT(shares_count) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint AS current_shares_available,
+
+        COUNT(shares_count) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint AS previous_shares_available,
+
+        COUNT(views_count) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint AS current_views_available,
+
+        COUNT(views_count) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint AS previous_views_available,
+
+        COUNT(reposts_count) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint AS current_reposts_available,
+
+        COUNT(reposts_count) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint AS previous_reposts_available,
+
+        COUNT(quotes_count) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint AS current_quotes_available,
+
+        COUNT(quotes_count) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint AS previous_quotes_available
+
+    FROM post_metrics
+
+    WHERE period_bucket IS NOT NULL
+
+    GROUP BY GROUPING SETS (
+        (platform),
+        ()
+    )
+)
+
+SELECT
+    platform,
+    comparison_days,
+
+    current_posts,
+    previous_posts,
+
+    ROUND(
+        100.0 * current_likes_available
+        / NULLIF(current_posts, 0),
+        2
+    ) AS current_likes_coverage_pct,
+
+    ROUND(
+        100.0 * previous_likes_available
+        / NULLIF(previous_posts, 0),
+        2
+    ) AS previous_likes_coverage_pct,
+
+    ROUND(
+        100.0 * current_comments_available
+        / NULLIF(current_posts, 0),
+        2
+    ) AS current_comments_coverage_pct,
+
+    ROUND(
+        100.0 * previous_comments_available
+        / NULLIF(previous_posts, 0),
+        2
+    ) AS previous_comments_coverage_pct,
+
+    ROUND(
+        100.0 * current_shares_available
+        / NULLIF(current_posts, 0),
+        2
+    ) AS current_shares_coverage_pct,
+
+    ROUND(
+        100.0 * previous_shares_available
+        / NULLIF(previous_posts, 0),
+        2
+    ) AS previous_shares_coverage_pct,
+
+    ROUND(
+        100.0 * current_views_available
+        / NULLIF(current_posts, 0),
+        2
+    ) AS current_views_coverage_pct,
+
+    ROUND(
+        100.0 * previous_views_available
+        / NULLIF(previous_posts, 0),
+        2
+    ) AS previous_views_coverage_pct,
+
+    ROUND(
+        100.0 * current_reposts_available
+        / NULLIF(current_posts, 0),
+        2
+    ) AS current_reposts_coverage_pct,
+
+    ROUND(
+        100.0 * previous_reposts_available
+        / NULLIF(previous_posts, 0),
+        2
+    ) AS previous_reposts_coverage_pct,
+
+    ROUND(
+        100.0 * current_quotes_available
+        / NULLIF(current_posts, 0),
+        2
+    ) AS current_quotes_coverage_pct,
+
+    ROUND(
+        100.0 * previous_quotes_available
+        / NULLIF(previous_posts, 0),
+        2
+    ) AS previous_quotes_coverage_pct,
+
+    (
+        current_likes_available = current_posts
+        AND previous_likes_available = previous_posts
+    ) AS likes_fully_comparable,
+
+    (
+        current_comments_available = current_posts
+        AND previous_comments_available = previous_posts
+    ) AS comments_fully_comparable,
+
+    (
+        current_shares_available = current_posts
+        AND previous_shares_available = previous_posts
+    ) AS shares_fully_comparable,
+
+    (
+        current_views_available = current_posts
+        AND previous_views_available = previous_posts
+    ) AS views_fully_comparable,
+
+    (
+        current_reposts_available = current_posts
+        AND previous_reposts_available = previous_posts
+    ) AS reposts_fully_comparable,
+
+    (
+        current_quotes_available = current_posts
+        AND previous_quotes_available = previous_posts
+    ) AS quotes_fully_comparable
+
+FROM aggregated
+
+ORDER BY
+    CASE
+        WHEN platform = 'all'
+            THEN 0
+        ELSE 1
+    END,
+    platform;

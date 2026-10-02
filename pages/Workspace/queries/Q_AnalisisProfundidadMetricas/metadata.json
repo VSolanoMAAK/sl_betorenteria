@@ -1,0 +1,35 @@
+{
+  "gitSyncId": "6a9b555e277a9d17c2bbaffc_658c395d-5963-45af-b532-260e07a3ea35",
+  "id": "Workspace_Q_AnalisisProfundidadMetricas",
+  "pluginId": "postgres-plugin",
+  "pluginType": "DB",
+  "unpublishedAction": {
+    "actionConfiguration": {
+      "body": "WITH params AS (\n    SELECT\n        {{ CW_Analisis.model.selectedQueryId }}::uuid\n            AS query_id,\n\n        lower(\n            COALESCE(\n                NULLIF(\n                    {{ CW_Analisis.model.platform }}::text,\n                    ''\n                ),\n                'all'\n            )\n        ) AS selected_platform,\n\n        lower(\n            {{ appsmith.store.userEmail }}::text\n        ) AS user_email\n),\n\nquery_context AS (\n    SELECT\n        q.tenant_id,\n        q.id AS query_id,\n        p.selected_platform\n\n    FROM params p\n\n    JOIN public.sl_users u\n      ON lower(u.email) = p.user_email\n     AND u.is_active = TRUE\n\n    JOIN public.sl_queries q\n      ON q.tenant_id = u.tenant_id\n     AND q.id = p.query_id\n\n    LIMIT 1\n),\n\nmatched_posts AS (\n    SELECT\n        qc.tenant_id,\n        sp.id AS post_id,\n        lower(mt.platform) AS platform\n\n    FROM query_context qc\n\n    JOIN public.sl_query_social_posts qsp\n      ON qsp.tenant_id = qc.tenant_id\n     AND qsp.query_id = qc.query_id\n     AND qsp.is_active = TRUE\n\n    JOIN public.sl_social_posts sp\n      ON sp.tenant_id = qsp.tenant_id\n     AND sp.id = qsp.post_id\n\n    JOIN public.sl_monitored_targets mt\n      ON mt.tenant_id = sp.tenant_id\n     AND mt.id = sp.target_id\n\n    WHERE\n        qc.selected_platform = 'all'\n        OR lower(mt.platform) =\n           qc.selected_platform\n),\n\nper_post AS (\n    SELECT\n        mp.platform,\n        mp.post_id,\n\n        COUNT(m.id)::bigint\n            AS snapshot_count,\n\n        MIN(m.fetched_at)\n            AS first_metric_at,\n\n        MAX(m.fetched_at)\n            AS last_metric_at,\n\n        EXTRACT(\n            EPOCH FROM (\n                MAX(m.fetched_at)\n                - MIN(m.fetched_at)\n            )\n        ) / 3600.0\n            AS history_hours\n\n    FROM matched_posts mp\n\n    LEFT JOIN public.sl_post_metrics m\n      ON m.tenant_id = mp.tenant_id\n     AND m.post_id = mp.post_id\n\n    GROUP BY\n        mp.platform,\n        mp.post_id\n),\n\nsummary AS (\n    SELECT\n        CASE\n            WHEN GROUPING(platform) = 1\n                THEN 'all'\n            ELSE platform\n        END AS platform,\n\n        COUNT(*)::bigint\n            AS matched_posts,\n\n        COUNT(*) FILTER (\n            WHERE snapshot_count >= 1\n        )::bigint\n            AS posts_with_metrics,\n\n        COUNT(*) FILTER (\n            WHERE snapshot_count >= 2\n        )::bigint\n            AS posts_with_multiple_snapshots,\n\n        COUNT(*) FILTER (\n            WHERE history_hours >= 6\n        )::bigint\n            AS posts_with_6h_history,\n\n        COUNT(*) FILTER (\n            WHERE history_hours >= 12\n        )::bigint\n            AS posts_with_12h_history,\n\n        COUNT(*) FILTER (\n            WHERE history_hours >= 18\n        )::bigint\n            AS posts_with_18h_history,\n\n        COUNT(*) FILTER (\n            WHERE history_hours >= 24\n        )::bigint\n            AS posts_with_24h_history,\n\n        COUNT(*) FILTER (\n            WHERE history_hours >= 48\n        )::bigint\n            AS posts_with_48h_history,\n\n        ROUND(\n            AVG(history_hours)\n                FILTER (\n                    WHERE snapshot_count >= 2\n                ),\n            2\n        ) AS avg_history_hours,\n\n        ROUND(\n            MAX(history_hours),\n            2\n        ) AS max_history_hours,\n\n        MIN(first_metric_at)\n            AS earliest_metric_snapshot,\n\n        MAX(last_metric_at)\n            AS latest_metric_snapshot\n\n    FROM per_post\n\n    GROUP BY GROUPING SETS (\n        (platform),\n        ()\n    )\n)\n\nSELECT\n    platform,\n\n    matched_posts,\n    posts_with_metrics,\n    posts_with_multiple_snapshots,\n\n    posts_with_6h_history,\n    posts_with_12h_history,\n    posts_with_18h_history,\n    posts_with_24h_history,\n    posts_with_48h_history,\n\n    ROUND(\n        100.0\n        * posts_with_multiple_snapshots\n        / NULLIF(matched_posts, 0),\n        2\n    ) AS multiple_snapshot_coverage_pct,\n\n    ROUND(\n        100.0\n        * posts_with_24h_history\n        / NULLIF(matched_posts, 0),\n        2\n    ) AS history_24h_coverage_pct,\n\n    avg_history_hours,\n    max_history_hours,\n\n    earliest_metric_snapshot,\n    latest_metric_snapshot\n\nFROM summary\n\nORDER BY\n    CASE\n        WHEN platform = 'all'\n            THEN 0\n        ELSE 1\n    END,\n    platform;",
+      "encodeParamsToggle": true,
+      "paginationType": "NONE",
+      "pluginSpecifiedTemplates": [
+        {
+          "value": true
+        }
+      ],
+      "timeoutInMillisecond": 10000
+    },
+    "confirmBeforeExecute": false,
+    "datasource": {
+      "id": "SL_Listening",
+      "isAutoGenerated": false,
+      "name": "SL_Listening",
+      "pluginId": "postgres-plugin"
+    },
+    "dynamicBindingPathList": [
+      {
+        "key": "body"
+      }
+    ],
+    "name": "Q_AnalisisProfundidadMetricas",
+    "pageId": "Workspace",
+    "runBehaviour": "MANUAL",
+    "userSetOnLoad": false
+  }
+}

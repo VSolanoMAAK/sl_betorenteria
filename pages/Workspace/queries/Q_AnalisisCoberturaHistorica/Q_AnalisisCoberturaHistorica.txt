@@ -1,0 +1,107 @@
+WITH params AS (
+    SELECT
+        {{ CW_Analisis.model.selectedQueryId }}::uuid
+            AS query_id,
+
+        lower(
+            {{ appsmith.store.userEmail }}::text
+        ) AS user_email
+),
+
+query_context AS (
+    SELECT
+        q.tenant_id,
+        q.id AS query_id,
+        q.name AS query_name
+
+    FROM params p
+
+    JOIN public.sl_users u
+      ON lower(u.email) = p.user_email
+     AND u.is_active = TRUE
+
+    JOIN public.sl_queries q
+      ON q.tenant_id = u.tenant_id
+     AND q.id = p.query_id
+
+    LIMIT 1
+),
+
+matched_posts AS (
+    SELECT
+        qc.query_id,
+        qc.query_name,
+
+        lower(mt.platform) AS platform,
+
+        sp.id AS post_id,
+
+        COALESCE(
+            sp.published_at,
+            sp.scraped_at
+        ) AS event_at
+
+    FROM query_context qc
+
+    JOIN public.sl_query_social_posts qsp
+      ON qsp.tenant_id = qc.tenant_id
+     AND qsp.query_id = qc.query_id
+     AND qsp.is_active = TRUE
+
+    JOIN public.sl_social_posts sp
+      ON sp.tenant_id = qsp.tenant_id
+     AND sp.id = qsp.post_id
+
+    JOIN public.sl_monitored_targets mt
+      ON mt.tenant_id = sp.tenant_id
+     AND mt.id = sp.target_id
+)
+
+SELECT
+    query_id,
+    query_name,
+    platform,
+
+    COUNT(*)::bigint
+        AS matched_posts,
+
+    MIN(event_at)
+        AS first_post_at,
+
+    MAX(event_at)
+        AS last_post_at,
+
+    MAX(event_at)
+        - MIN(event_at)
+        AS historical_span,
+
+    COUNT(*) FILTER (
+        WHERE event_at >=
+            CURRENT_TIMESTAMP
+            - INTERVAL '7 days'
+    )::bigint
+        AS posts_last_7d,
+
+    COUNT(*) FILTER (
+        WHERE event_at >=
+            CURRENT_TIMESTAMP
+            - INTERVAL '14 days'
+    )::bigint
+        AS posts_last_14d,
+
+    COUNT(*) FILTER (
+        WHERE event_at >=
+            CURRENT_TIMESTAMP
+            - INTERVAL '30 days'
+    )::bigint
+        AS posts_last_30d
+
+FROM matched_posts
+
+GROUP BY
+    query_id,
+    query_name,
+    platform
+
+ORDER BY
+    platform;

@@ -1,0 +1,214 @@
+WITH params AS (
+    SELECT
+        {{ CW_Analisis.model.selectedQueryId }}::uuid
+            AS query_id,
+
+        lower(
+            COALESCE(
+                NULLIF(
+                    {{ CW_Analisis.model.platform }}::text,
+                    ''
+                ),
+                'all'
+            )
+        ) AS selected_platform,
+
+        lower(
+            {{ appsmith.store.userEmail }}::text
+        ) AS user_email
+),
+
+query_context AS (
+    SELECT
+        q.tenant_id,
+        q.id AS query_id,
+        p.selected_platform
+
+    FROM params p
+
+    JOIN public.sl_users u
+      ON lower(u.email) = p.user_email
+     AND u.is_active = TRUE
+
+    JOIN public.sl_queries q
+      ON q.tenant_id = u.tenant_id
+     AND q.id = p.query_id
+
+    LIMIT 1
+),
+
+matched_posts AS (
+    SELECT
+        qc.tenant_id,
+        sp.id AS post_id,
+        lower(mt.platform) AS platform
+
+    FROM query_context qc
+
+    JOIN public.sl_query_social_posts qsp
+      ON qsp.tenant_id = qc.tenant_id
+     AND qsp.query_id = qc.query_id
+     AND qsp.is_active = TRUE
+
+    JOIN public.sl_social_posts sp
+      ON sp.tenant_id = qsp.tenant_id
+     AND sp.id = qsp.post_id
+
+    JOIN public.sl_monitored_targets mt
+      ON mt.tenant_id = sp.tenant_id
+     AND mt.id = sp.target_id
+
+    WHERE
+        qc.selected_platform = 'all'
+        OR lower(mt.platform) =
+           qc.selected_platform
+),
+
+per_post AS (
+    SELECT
+        mp.platform,
+        mp.post_id,
+
+        COUNT(m.id)::bigint
+            AS snapshot_count,
+
+        MIN(m.fetched_at)
+            AS first_metric_at,
+
+        MAX(m.fetched_at)
+            AS last_metric_at,
+
+        EXTRACT(
+            EPOCH FROM (
+                MAX(m.fetched_at)
+                - MIN(m.fetched_at)
+            )
+        ) / 3600.0
+            AS history_hours
+
+    FROM matched_posts mp
+
+    LEFT JOIN public.sl_post_metrics m
+      ON m.tenant_id = mp.tenant_id
+     AND m.post_id = mp.post_id
+
+    GROUP BY
+        mp.platform,
+        mp.post_id
+),
+
+summary AS (
+    SELECT
+        CASE
+            WHEN GROUPING(platform) = 1
+                THEN 'all'
+            ELSE platform
+        END AS platform,
+
+        COUNT(*)::bigint
+            AS matched_posts,
+
+        COUNT(*) FILTER (
+            WHERE snapshot_count >= 1
+        )::bigint
+            AS posts_with_metrics,
+
+        COUNT(*) FILTER (
+            WHERE snapshot_count >= 2
+        )::bigint
+            AS posts_with_multiple_snapshots,
+
+        COUNT(*) FILTER (
+            WHERE history_hours >= 6
+        )::bigint
+            AS posts_with_6h_history,
+
+        COUNT(*) FILTER (
+            WHERE history_hours >= 12
+        )::bigint
+            AS posts_with_12h_history,
+
+        COUNT(*) FILTER (
+            WHERE history_hours >= 18
+        )::bigint
+            AS posts_with_18h_history,
+
+        COUNT(*) FILTER (
+            WHERE history_hours >= 24
+        )::bigint
+            AS posts_with_24h_history,
+
+        COUNT(*) FILTER (
+            WHERE history_hours >= 48
+        )::bigint
+            AS posts_with_48h_history,
+
+        ROUND(
+            AVG(history_hours)
+                FILTER (
+                    WHERE snapshot_count >= 2
+                ),
+            2
+        ) AS avg_history_hours,
+
+        ROUND(
+            MAX(history_hours),
+            2
+        ) AS max_history_hours,
+
+        MIN(first_metric_at)
+            AS earliest_metric_snapshot,
+
+        MAX(last_metric_at)
+            AS latest_metric_snapshot
+
+    FROM per_post
+
+    GROUP BY GROUPING SETS (
+        (platform),
+        ()
+    )
+)
+
+SELECT
+    platform,
+
+    matched_posts,
+    posts_with_metrics,
+    posts_with_multiple_snapshots,
+
+    posts_with_6h_history,
+    posts_with_12h_history,
+    posts_with_18h_history,
+    posts_with_24h_history,
+    posts_with_48h_history,
+
+    ROUND(
+        100.0
+        * posts_with_multiple_snapshots
+        / NULLIF(matched_posts, 0),
+        2
+    ) AS multiple_snapshot_coverage_pct,
+
+    ROUND(
+        100.0
+        * posts_with_24h_history
+        / NULLIF(matched_posts, 0),
+        2
+    ) AS history_24h_coverage_pct,
+
+    avg_history_hours,
+    max_history_hours,
+
+    earliest_metric_snapshot,
+    latest_metric_snapshot
+
+FROM summary
+
+ORDER BY
+    CASE
+        WHEN platform = 'all'
+            THEN 0
+        ELSE 1
+    END,
+    platform;

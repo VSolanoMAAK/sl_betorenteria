@@ -1,0 +1,469 @@
+WITH params AS (
+    SELECT
+        {{ CW_Analisis.model.selectedQueryId }}::uuid
+            AS query_id,
+
+        GREATEST(
+            1,
+            LEAST(
+                {{ CW_Analisis.model.periodDays }}::integer,
+                365
+            )
+        ) AS max_days,
+
+        lower(
+            COALESCE(
+                NULLIF(
+                    {{ CW_Analisis.model.platform }}::text,
+                    ''
+                ),
+                'all'
+            )
+        ) AS selected_platform,
+
+        lower(
+            {{ appsmith.store.userEmail }}::text
+        ) AS user_email
+),
+
+query_context AS (
+    SELECT
+        q.tenant_id,
+        q.id AS query_id,
+        q.name AS query_name,
+        p.max_days,
+        p.selected_platform
+
+    FROM params p
+
+    JOIN public.sl_users u
+      ON lower(u.email) = p.user_email
+     AND u.is_active = TRUE
+
+    JOIN public.sl_queries q
+      ON q.tenant_id = u.tenant_id
+     AND q.id = p.query_id
+
+    LIMIT 1
+),
+
+matched_posts AS (
+    SELECT
+        qc.tenant_id,
+        qc.query_id,
+        qc.query_name,
+        qc.max_days,
+        qc.selected_platform,
+
+        sp.id AS post_id,
+        lower(mt.platform) AS platform,
+
+        COALESCE(
+            sp.published_at,
+            sp.scraped_at
+        ) AS event_at,
+
+        lm.id AS metric_id,
+
+        lm.likes_count,
+        lm.comments_count,
+        lm.shares_count,
+        lm.views_count,
+        lm.reposts_count,
+        lm.quotes_count,
+
+        CASE
+            WHEN lm.id IS NULL
+                THEN NULL
+            ELSE
+                  COALESCE(lm.likes_count, 0)
+                + COALESCE(lm.comments_count, 0)
+                + COALESCE(lm.shares_count, 0)
+                + COALESCE(lm.reposts_count, 0)
+                + COALESCE(lm.quotes_count, 0)
+        END AS interactions
+
+    FROM query_context qc
+
+    JOIN public.sl_query_social_posts qsp
+      ON qsp.tenant_id = qc.tenant_id
+     AND qsp.query_id = qc.query_id
+     AND qsp.is_active = TRUE
+
+    JOIN public.sl_social_posts sp
+      ON sp.tenant_id = qsp.tenant_id
+     AND sp.id = qsp.post_id
+
+    JOIN public.sl_monitored_targets mt
+      ON mt.tenant_id = sp.tenant_id
+     AND mt.id = sp.target_id
+
+    LEFT JOIN LATERAL (
+        SELECT
+            m.id,
+            m.likes_count,
+            m.comments_count,
+            m.shares_count,
+            m.views_count,
+            m.reposts_count,
+            m.quotes_count
+        FROM public.sl_post_metrics m
+        WHERE m.tenant_id = sp.tenant_id
+          AND m.post_id = sp.id
+        ORDER BY
+            m.fetched_at DESC NULLS LAST,
+            m.id DESC
+        LIMIT 1
+    ) lm
+      ON TRUE
+
+    WHERE
+        (
+            qc.selected_platform = 'all'
+            OR lower(mt.platform) =
+               qc.selected_platform
+        )
+),
+
+platform_history AS (
+    SELECT
+        platform,
+        MIN(event_at) AS first_post_at,
+        MAX(event_at) AS last_post_at,
+
+        COUNT(*) FILTER (
+            WHERE event_at >=
+                CURRENT_TIMESTAMP
+                - max_days * INTERVAL '1 day'
+        )::bigint AS recent_posts,
+
+        FLOOR(
+            EXTRACT(
+                EPOCH FROM (
+                    CURRENT_TIMESTAMP
+                    - MIN(event_at)
+                )
+            ) / 86400
+        )::integer AS history_days
+
+    FROM matched_posts
+
+    GROUP BY
+        platform,
+        max_days
+),
+
+eligible_platforms AS (
+    SELECT *
+    FROM platform_history
+    WHERE recent_posts > 0
+),
+
+window_choice AS (
+    SELECT
+        CASE
+            WHEN COUNT(*) = 0
+                THEN NULL
+
+            WHEN MIN(history_days) < 2
+                THEN NULL
+
+            ELSE LEAST(
+                (
+                    SELECT max_days
+                    FROM query_context
+                    LIMIT 1
+                ),
+                GREATEST(
+                    1,
+                    FLOOR(
+                        MIN(history_days)::numeric
+                        / 2
+                    )::integer
+                )
+            )
+        END AS comparison_days,
+
+        MIN(history_days)
+            AS shortest_history_days,
+
+        COUNT(*)::integer
+            AS comparable_platforms
+
+    FROM eligible_platforms
+),
+
+comparison_posts AS (
+    SELECT
+        mp.*,
+        wc.comparison_days,
+        wc.shortest_history_days,
+        wc.comparable_platforms,
+
+        CASE
+            WHEN wc.comparison_days IS NULL
+                THEN NULL
+
+            WHEN mp.event_at >=
+                CURRENT_TIMESTAMP
+                - wc.comparison_days
+                  * INTERVAL '1 day'
+                THEN 'current'
+
+            WHEN mp.event_at >=
+                CURRENT_TIMESTAMP
+                - wc.comparison_days
+                  * 2
+                  * INTERVAL '1 day'
+                THEN 'previous'
+
+            ELSE NULL
+        END AS period_bucket
+
+    FROM matched_posts mp
+
+    CROSS JOIN window_choice wc
+
+    JOIN eligible_platforms ep
+      ON ep.platform = mp.platform
+),
+
+aggregated AS (
+    SELECT
+        CASE
+            WHEN GROUPING(platform) = 1
+                THEN 'all'
+            ELSE platform
+        END AS platform,
+
+        MAX(comparison_days)
+            AS comparison_days,
+
+        MAX(shortest_history_days)
+            AS shortest_history_days,
+
+        MAX(comparable_platforms)
+            AS comparable_platforms,
+
+        COUNT(*) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint AS current_posts,
+
+        COUNT(*) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint AS previous_posts,
+
+        COUNT(metric_id) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint AS current_posts_with_metrics,
+
+        COUNT(metric_id) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint AS previous_posts_with_metrics,
+
+        SUM(interactions) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint AS current_interactions,
+
+        SUM(interactions) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint AS previous_interactions,
+
+        SUM(comments_count) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint AS current_comments,
+
+        SUM(comments_count) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint AS previous_comments,
+
+        SUM(views_count) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint AS current_views,
+
+        SUM(views_count) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint AS previous_views
+
+    FROM comparison_posts
+
+    WHERE period_bucket IS NOT NULL
+
+    GROUP BY GROUPING SETS (
+        (platform),
+        ()
+    )
+),
+
+calculated AS (
+    SELECT
+        *,
+
+        CASE
+            WHEN current_posts > 0
+                 AND current_interactions IS NOT NULL
+                THEN ROUND(
+                    current_interactions::numeric
+                    / current_posts::numeric,
+                    2
+                )
+            ELSE NULL
+        END AS current_interactions_per_post,
+
+        CASE
+            WHEN previous_posts > 0
+                 AND previous_interactions IS NOT NULL
+                THEN ROUND(
+                    previous_interactions::numeric
+                    / previous_posts::numeric,
+                    2
+                )
+            ELSE NULL
+        END AS previous_interactions_per_post,
+
+        CASE
+            WHEN current_posts > 0
+                 AND current_views IS NOT NULL
+                THEN ROUND(
+                    current_views::numeric
+                    / current_posts::numeric,
+                    2
+                )
+            ELSE NULL
+        END AS current_views_per_post,
+
+        CASE
+            WHEN previous_posts > 0
+                 AND previous_views IS NOT NULL
+                THEN ROUND(
+                    previous_views::numeric
+                    / previous_posts::numeric,
+                    2
+                )
+            ELSE NULL
+        END AS previous_views_per_post
+
+    FROM aggregated
+)
+
+SELECT
+    platform,
+
+    comparison_days,
+    shortest_history_days,
+    comparable_platforms,
+
+    current_posts,
+    previous_posts,
+
+    current_interactions,
+    previous_interactions,
+
+    current_comments,
+    previous_comments,
+
+    current_views,
+    previous_views,
+
+    current_posts_with_metrics,
+    previous_posts_with_metrics,
+
+    current_interactions_per_post,
+    previous_interactions_per_post,
+
+    current_views_per_post,
+    previous_views_per_post,
+
+    CASE
+        WHEN previous_interactions_per_post > 0
+            THEN ROUND(
+                (
+                    (
+                        current_interactions_per_post
+                        - previous_interactions_per_post
+                    )
+                    / previous_interactions_per_post
+                ) * 100,
+                2
+            )
+        ELSE NULL
+    END AS interactions_per_post_change_pct,
+
+    CASE
+        WHEN previous_views_per_post > 0
+            THEN ROUND(
+                (
+                    (
+                        current_views_per_post
+                        - previous_views_per_post
+                    )
+                    / previous_views_per_post
+                ) * 100,
+                2
+            )
+        ELSE NULL
+    END AS views_per_post_change_pct,
+
+    CASE
+        WHEN previous_posts > 0
+            THEN ROUND(
+                (
+                    (
+                        current_posts::numeric
+                        - previous_posts::numeric
+                    )
+                    / previous_posts::numeric
+                ) * 100,
+                2
+            )
+        ELSE NULL
+    END AS publishing_change_pct,
+
+    CASE
+        WHEN current_posts > 0
+            THEN ROUND(
+                current_posts_with_metrics::numeric
+                / current_posts::numeric
+                * 100,
+                2
+            )
+        ELSE NULL
+    END AS current_metrics_coverage_pct,
+
+    CASE
+        WHEN previous_posts > 0
+            THEN ROUND(
+                previous_posts_with_metrics::numeric
+                / previous_posts::numeric
+                * 100,
+                2
+            )
+        ELSE NULL
+    END AS previous_metrics_coverage_pct,
+
+    CURRENT_TIMESTAMP
+        - comparison_days * INTERVAL '1 day'
+        AS current_period_from,
+
+    CURRENT_TIMESTAMP
+        AS current_period_to,
+
+    CURRENT_TIMESTAMP
+        - comparison_days
+          * 2
+          * INTERVAL '1 day'
+        AS previous_period_from,
+
+    CURRENT_TIMESTAMP
+        - comparison_days * INTERVAL '1 day'
+        AS previous_period_to
+
+FROM calculated
+
+ORDER BY
+    CASE
+        WHEN platform = 'all'
+            THEN 0
+        ELSE 1
+    END,
+    platform;

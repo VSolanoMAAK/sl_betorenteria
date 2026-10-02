@@ -1,0 +1,598 @@
+WITH params AS (
+    SELECT
+        {{ CW_Analisis.model.selectedQueryId }}::uuid
+            AS query_id,
+
+        GREATEST(
+            1,
+            LEAST(
+                {{ CW_Analisis.model.periodDays }}::integer,
+                365
+            )
+        ) AS max_days,
+
+        lower(
+            COALESCE(
+                NULLIF(
+                    {{ CW_Analisis.model.platform }}::text,
+                    ''
+                ),
+                'all'
+            )
+        ) AS selected_platform,
+
+        lower(
+            {{ appsmith.store.userEmail }}::text
+        ) AS user_email
+),
+
+query_context AS (
+    SELECT
+        q.tenant_id,
+        q.id AS query_id,
+        p.max_days,
+        p.selected_platform
+
+    FROM params p
+
+    JOIN public.sl_users u
+      ON lower(u.email) = p.user_email
+     AND u.is_active = TRUE
+
+    JOIN public.sl_queries q
+      ON q.tenant_id = u.tenant_id
+     AND q.id = p.query_id
+
+    LIMIT 1
+),
+
+matched_posts AS (
+    SELECT
+        qc.tenant_id,
+        qc.max_days,
+        qc.selected_platform,
+
+        sp.id AS post_id,
+
+        lower(mt.platform)
+            AS platform,
+
+        CASE
+            WHEN lower(
+                btrim(
+                    COALESCE(
+                        sp.post_type,
+                        ''
+                    )
+                )
+            ) IN (
+                'carousel',
+                'carrusel'
+            )
+                THEN 'carousel'
+
+            ELSE COALESCE(
+                NULLIF(
+                    lower(
+                        btrim(
+                            sp.post_type
+                        )
+                    ),
+                    ''
+                ),
+                'sin_clasificar'
+            )
+        END AS post_type,
+
+        COALESCE(
+            sp.published_at,
+            sp.scraped_at
+        ) AS event_at,
+
+        lm.likes_count,
+        lm.comments_count
+
+    FROM query_context qc
+
+    JOIN public.sl_query_social_posts qsp
+      ON qsp.tenant_id = qc.tenant_id
+     AND qsp.query_id = qc.query_id
+     AND qsp.is_active = TRUE
+
+    JOIN public.sl_social_posts sp
+      ON sp.tenant_id = qsp.tenant_id
+     AND sp.id = qsp.post_id
+
+    JOIN public.sl_monitored_targets mt
+      ON mt.tenant_id = sp.tenant_id
+     AND mt.id = sp.target_id
+
+    LEFT JOIN LATERAL (
+        SELECT
+            m.likes_count,
+            m.comments_count
+
+        FROM public.sl_post_metrics m
+
+        WHERE m.tenant_id = sp.tenant_id
+          AND m.post_id = sp.id
+
+        ORDER BY
+            m.fetched_at DESC NULLS LAST,
+            m.id DESC
+
+        LIMIT 1
+    ) lm
+      ON TRUE
+
+    WHERE
+        qc.selected_platform = 'all'
+        OR lower(mt.platform) =
+           qc.selected_platform
+),
+
+platform_history AS (
+    SELECT
+        platform,
+
+        FLOOR(
+            EXTRACT(
+                EPOCH FROM (
+                    CURRENT_TIMESTAMP
+                    - MIN(event_at)
+                )
+            ) / 86400
+        )::integer
+            AS history_days,
+
+        COUNT(*) FILTER (
+            WHERE event_at >=
+                CURRENT_TIMESTAMP
+                - max_days * INTERVAL '1 day'
+        )::bigint
+            AS recent_posts
+
+    FROM matched_posts
+
+    GROUP BY
+        platform,
+        max_days
+),
+
+eligible_platforms AS (
+    SELECT
+        platform,
+        history_days
+
+    FROM platform_history
+
+    WHERE recent_posts > 0
+),
+
+window_choice AS (
+    SELECT
+        CASE
+            WHEN COUNT(*) = 0
+                THEN NULL
+
+            WHEN MIN(history_days) < 2
+                THEN NULL
+
+            ELSE LEAST(
+                (
+                    SELECT max_days
+                    FROM query_context
+                    LIMIT 1
+                ),
+
+                GREATEST(
+                    1,
+
+                    FLOOR(
+                        MIN(history_days)::numeric
+                        / 2
+                    )::integer
+                )
+            )
+        END AS comparison_days
+
+    FROM eligible_platforms
+),
+
+comparison_posts AS (
+    SELECT
+        mp.platform,
+        mp.post_type,
+        mp.post_id,
+        mp.likes_count,
+        mp.comments_count,
+
+        wc.comparison_days,
+
+        CASE
+            WHEN wc.comparison_days IS NULL
+                THEN NULL
+
+            WHEN mp.event_at >=
+                CURRENT_TIMESTAMP
+                - wc.comparison_days
+                  * INTERVAL '1 day'
+                THEN 'current'
+
+            WHEN mp.event_at >=
+                CURRENT_TIMESTAMP
+                - wc.comparison_days
+                  * 2
+                  * INTERVAL '1 day'
+                THEN 'previous'
+
+            ELSE NULL
+        END AS period_bucket
+
+    FROM matched_posts mp
+
+    CROSS JOIN window_choice wc
+
+    JOIN eligible_platforms ep
+      ON ep.platform = mp.platform
+),
+
+base_rows AS (
+    SELECT
+        platform,
+        post_type,
+        comparison_days,
+        period_bucket,
+
+        likes_count,
+        comments_count,
+
+        CASE
+            WHEN likes_count IS NOT NULL
+             AND comments_count IS NOT NULL
+
+                THEN
+                    likes_count
+                    + comments_count
+
+            ELSE NULL
+        END AS engagement
+
+    FROM comparison_posts
+
+    WHERE period_bucket IS NOT NULL
+),
+
+platform_format AS (
+    SELECT
+        platform,
+        post_type,
+
+        MAX(comparison_days)
+            AS comparison_days,
+
+        COUNT(*) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint
+            AS current_posts,
+
+        COUNT(*) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint
+            AS previous_posts,
+
+        COUNT(engagement) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint
+            AS current_posts_with_engagement,
+
+        COUNT(engagement) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint
+            AS previous_posts_with_engagement,
+
+        SUM(engagement) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint
+            AS current_engagement,
+
+        SUM(engagement) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint
+            AS previous_engagement,
+
+        SUM(likes_count) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint
+            AS current_likes,
+
+        SUM(likes_count) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint
+            AS previous_likes,
+
+        SUM(comments_count) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint
+            AS current_comments,
+
+        SUM(comments_count) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint
+            AS previous_comments
+
+    FROM base_rows
+
+    GROUP BY
+        platform,
+        post_type
+),
+
+overall_format AS (
+    SELECT
+        'all'::text
+            AS platform,
+
+        post_type,
+
+        MAX(comparison_days)
+            AS comparison_days,
+
+        COUNT(*) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint
+            AS current_posts,
+
+        COUNT(*) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint
+            AS previous_posts,
+
+        COUNT(engagement) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint
+            AS current_posts_with_engagement,
+
+        COUNT(engagement) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint
+            AS previous_posts_with_engagement,
+
+        SUM(engagement) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint
+            AS current_engagement,
+
+        SUM(engagement) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint
+            AS previous_engagement,
+
+        SUM(likes_count) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint
+            AS current_likes,
+
+        SUM(likes_count) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint
+            AS previous_likes,
+
+        SUM(comments_count) FILTER (
+            WHERE period_bucket = 'current'
+        )::bigint
+            AS current_comments,
+
+        SUM(comments_count) FILTER (
+            WHERE period_bucket = 'previous'
+        )::bigint
+            AS previous_comments
+
+    FROM base_rows
+
+    GROUP BY
+        post_type
+),
+
+combined AS (
+    SELECT *
+    FROM overall_format
+
+    UNION ALL
+
+    SELECT *
+    FROM platform_format
+),
+
+calculated AS (
+    SELECT
+        *,
+
+        CASE
+            WHEN current_posts > 0
+             AND current_posts_with_engagement =
+                 current_posts
+
+                THEN ROUND(
+                    current_engagement::numeric
+                    / current_posts::numeric,
+                    2
+                )
+
+            ELSE NULL
+        END AS current_engagement_per_post,
+
+        CASE
+            WHEN previous_posts > 0
+             AND previous_posts_with_engagement =
+                 previous_posts
+
+                THEN ROUND(
+                    previous_engagement::numeric
+                    / previous_posts::numeric,
+                    2
+                )
+
+            ELSE NULL
+        END AS previous_engagement_per_post,
+
+        CASE
+            WHEN current_posts > 0
+                THEN ROUND(
+                    current_likes::numeric
+                    / current_posts::numeric,
+                    2
+                )
+            ELSE NULL
+        END AS current_likes_per_post,
+
+        CASE
+            WHEN current_posts > 0
+                THEN ROUND(
+                    current_comments::numeric
+                    / current_posts::numeric,
+                    2
+                )
+            ELSE NULL
+        END AS current_comments_per_post
+
+    FROM combined
+),
+
+with_change AS (
+    SELECT
+        *,
+
+        CASE
+            WHEN previous_engagement_per_post > 0
+             AND current_engagement_per_post IS NOT NULL
+
+                THEN ROUND(
+                    (
+                        (
+                            current_engagement_per_post
+                            - previous_engagement_per_post
+                        )
+                        / previous_engagement_per_post
+                    ) * 100,
+                    2
+                )
+
+            ELSE NULL
+        END AS engagement_per_post_change_pct,
+
+        CASE
+            WHEN previous_posts > 0
+                THEN ROUND(
+                    (
+                        (
+                            current_posts::numeric
+                            - previous_posts::numeric
+                        )
+                        / previous_posts::numeric
+                    ) * 100,
+                    2
+                )
+
+            ELSE NULL
+        END AS publishing_change_pct
+
+    FROM calculated
+),
+
+with_share AS (
+    SELECT
+        *,
+
+        CASE
+            WHEN
+                SUM(
+                    COALESCE(
+                        current_engagement,
+                        0
+                    )
+                ) OVER (
+                    PARTITION BY platform
+                ) > 0
+
+            AND current_engagement IS NOT NULL
+
+                THEN ROUND(
+                    100.0
+                    * current_engagement::numeric
+                    / SUM(
+                        COALESCE(
+                            current_engagement,
+                            0
+                        )
+                    ) OVER (
+                        PARTITION BY platform
+                    ),
+                    2
+                )
+
+            ELSE NULL
+        END AS current_engagement_share_pct,
+
+        CASE
+            WHEN current_engagement_per_post
+                 IS NOT NULL
+
+                THEN DENSE_RANK() OVER (
+                    PARTITION BY platform
+                    ORDER BY
+                        current_engagement_per_post
+                        DESC NULLS LAST
+                )
+
+            ELSE NULL
+        END AS engagement_per_post_rank
+
+    FROM with_change
+)
+
+SELECT
+    platform,
+    post_type,
+    comparison_days,
+
+    current_posts,
+    previous_posts,
+
+    current_engagement,
+    previous_engagement,
+
+    current_engagement_per_post,
+    previous_engagement_per_post,
+
+    engagement_per_post_change_pct,
+    publishing_change_pct,
+
+    current_likes_per_post,
+    current_comments_per_post,
+
+    current_engagement_share_pct,
+    engagement_per_post_rank,
+
+    current_posts_with_engagement,
+    previous_posts_with_engagement
+
+FROM with_share
+
+WHERE
+    current_posts > 0
+    OR previous_posts > 0
+
+ORDER BY
+    CASE
+        WHEN platform = 'all'
+            THEN 0
+        ELSE 1
+    END,
+
+    platform,
+
+    engagement_per_post_rank
+        NULLS LAST,
+
+    post_type;

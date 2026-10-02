@@ -1,0 +1,35 @@
+{
+  "gitSyncId": "6a9b555e277a9d17c2bbaffc_91643e98-13c3-46cb-82f6-34ac7d3dc78e",
+  "id": "Workspace_Q_AnalisisCobertura24h",
+  "pluginId": "postgres-plugin",
+  "pluginType": "DB",
+  "unpublishedAction": {
+    "actionConfiguration": {
+      "body": "WITH params AS (\n    SELECT\n        {{ CW_Analisis.model.selectedQueryId }}::uuid\n            AS query_id,\n\n        lower(\n            COALESCE(\n                NULLIF(\n                    {{ CW_Analisis.model.platform }}::text,\n                    ''\n                ),\n                'all'\n            )\n        ) AS selected_platform,\n\n        lower(\n            {{ appsmith.store.userEmail }}::text\n        ) AS user_email\n),\n\nquery_context AS (\n    SELECT\n        q.tenant_id,\n        q.id AS query_id,\n        p.selected_platform\n\n    FROM params p\n\n    JOIN public.sl_users u\n      ON lower(u.email) = p.user_email\n     AND u.is_active = TRUE\n\n    JOIN public.sl_queries q\n      ON q.tenant_id = u.tenant_id\n     AND q.id = p.query_id\n\n    LIMIT 1\n),\n\nmatched_posts AS (\n    SELECT\n        qc.tenant_id,\n        qc.query_id,\n\n        sp.id AS post_id,\n\n        lower(mt.platform)\n            AS platform,\n\n        COALESCE(\n            sp.published_at,\n            sp.scraped_at\n        ) AS event_at,\n\n        COALESCE(\n            sp.published_at,\n            sp.scraped_at\n        ) + INTERVAL '24 hours'\n            AS target_metric_at\n\n    FROM query_context qc\n\n    JOIN public.sl_query_social_posts qsp\n      ON qsp.tenant_id = qc.tenant_id\n     AND qsp.query_id = qc.query_id\n     AND qsp.is_active = TRUE\n\n    JOIN public.sl_social_posts sp\n      ON sp.tenant_id = qsp.tenant_id\n     AND sp.id = qsp.post_id\n\n    JOIN public.sl_monitored_targets mt\n      ON mt.tenant_id = sp.tenant_id\n     AND mt.id = sp.target_id\n\n    WHERE\n        (\n            qc.selected_platform = 'all'\n            OR lower(mt.platform) =\n               qc.selected_platform\n        )\n\n        AND COALESCE(\n            sp.published_at,\n            sp.scraped_at\n        ) <=\n            CURRENT_TIMESTAMP\n            - INTERVAL '24 hours'\n),\n\nwith_snapshot AS (\n    SELECT\n        mp.*,\n\n        m24.fetched_at\n            AS metric_24h_at,\n\n        m24.likes_count,\n        m24.comments_count,\n        m24.shares_count,\n        m24.views_count,\n\n        CASE\n            WHEN m24.fetched_at IS NULL\n                THEN NULL\n\n            ELSE ABS(\n                EXTRACT(\n                    EPOCH FROM (\n                        m24.fetched_at\n                        - mp.target_metric_at\n                    )\n                )\n            ) / 3600.0\n        END AS distance_hours\n\n    FROM matched_posts mp\n\n    LEFT JOIN LATERAL (\n        SELECT\n            m.fetched_at,\n            m.likes_count,\n            m.comments_count,\n            m.shares_count,\n            m.views_count\n\n        FROM public.sl_post_metrics m\n\n        WHERE m.tenant_id = mp.tenant_id\n          AND m.post_id = mp.post_id\n\n        ORDER BY\n            ABS(\n                EXTRACT(\n                    EPOCH FROM (\n                        m.fetched_at\n                        - mp.target_metric_at\n                    )\n                )\n            ),\n            m.fetched_at\n\n        LIMIT 1\n    ) m24\n      ON TRUE\n)\n\nSELECT\n    CASE\n        WHEN GROUPING(platform) = 1\n            THEN 'all'\n        ELSE platform\n    END AS platform,\n\n    COUNT(*)::bigint\n        AS eligible_posts,\n\n    COUNT(metric_24h_at)::bigint\n        AS posts_with_any_snapshot,\n\n    COUNT(*) FILTER (\n        WHERE distance_hours <= 3\n    )::bigint\n        AS posts_with_snapshot_within_3h,\n\n    COUNT(*) FILTER (\n        WHERE distance_hours <= 6\n    )::bigint\n        AS posts_with_snapshot_within_6h,\n\n    COUNT(*) FILTER (\n        WHERE distance_hours <= 12\n    )::bigint\n        AS posts_with_snapshot_within_12h,\n\n    ROUND(\n        100.0\n        * COUNT(*) FILTER (\n            WHERE distance_hours <= 6\n        )\n        / NULLIF(\n            COUNT(*),\n            0\n        ),\n        2\n    ) AS coverage_within_6h_pct,\n\n    ROUND(\n        AVG(distance_hours)\n            FILTER (\n                WHERE metric_24h_at IS NOT NULL\n            ),\n        2\n    ) AS avg_snapshot_distance_hours,\n\n    ROUND(\n        MAX(distance_hours)\n            FILTER (\n                WHERE metric_24h_at IS NOT NULL\n            ),\n        2\n    ) AS max_snapshot_distance_hours,\n\n    MIN(metric_24h_at)\n        AS earliest_selected_snapshot,\n\n    MAX(metric_24h_at)\n        AS latest_selected_snapshot\n\nFROM with_snapshot\n\nGROUP BY GROUPING SETS (\n    (platform),\n    ()\n)\n\nORDER BY\n    CASE\n        WHEN\n            CASE\n                WHEN GROUPING(platform) = 1\n                    THEN 'all'\n                ELSE platform\n            END = 'all'\n            THEN 0\n        ELSE 1\n    END,\n\n    platform;",
+      "encodeParamsToggle": true,
+      "paginationType": "NONE",
+      "pluginSpecifiedTemplates": [
+        {
+          "value": true
+        }
+      ],
+      "timeoutInMillisecond": 10000
+    },
+    "confirmBeforeExecute": false,
+    "datasource": {
+      "id": "SL_Listening",
+      "isAutoGenerated": false,
+      "name": "SL_Listening",
+      "pluginId": "postgres-plugin"
+    },
+    "dynamicBindingPathList": [
+      {
+        "key": "body"
+      }
+    ],
+    "name": "Q_AnalisisCobertura24h",
+    "pageId": "Workspace",
+    "runBehaviour": "MANUAL",
+    "userSetOnLoad": false
+  }
+}

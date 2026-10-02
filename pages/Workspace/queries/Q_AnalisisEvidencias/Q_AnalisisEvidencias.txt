@@ -1,0 +1,374 @@
+WITH params AS (
+    SELECT
+        {{ CW_Analisis.model.selectedQueryId }}::uuid
+            AS query_id,
+
+        GREATEST(
+            1,
+            LEAST(
+                {{ CW_Analisis.model.periodDays }}::integer,
+                365
+            )
+        ) AS max_days,
+
+        lower(
+            COALESCE(
+                NULLIF(
+                    {{ CW_Analisis.model.platform }}::text,
+                    ''
+                ),
+                'all'
+            )
+        ) AS selected_platform,
+
+        lower(
+            {{ appsmith.store.userEmail }}::text
+        ) AS user_email
+),
+
+query_context AS (
+    SELECT
+        q.tenant_id,
+        q.id AS query_id,
+        p.max_days,
+        p.selected_platform
+
+    FROM params p
+
+    JOIN public.sl_users u
+      ON lower(u.email) = p.user_email
+     AND u.is_active = TRUE
+
+    JOIN public.sl_queries q
+      ON q.tenant_id = u.tenant_id
+     AND q.id = p.query_id
+
+    LIMIT 1
+),
+
+matched_posts AS (
+    SELECT
+        qc.tenant_id,
+        qc.max_days,
+        qc.selected_platform,
+
+        sp.id AS post_id,
+
+        lower(mt.platform)
+            AS platform,
+
+        mt.handle,
+
+        CASE
+            WHEN lower(
+                btrim(
+                    COALESCE(
+                        sp.post_type,
+                        ''
+                    )
+                )
+            ) IN (
+                'carousel',
+                'carrusel'
+            )
+                THEN 'carousel'
+
+            ELSE COALESCE(
+                NULLIF(
+                    lower(
+                        btrim(
+                            sp.post_type
+                        )
+                    ),
+                    ''
+                ),
+                'sin_clasificar'
+            )
+        END AS post_type,
+
+        sp.content_text,
+        sp.post_url,
+
+        COALESCE(
+            sp.published_at,
+            sp.scraped_at
+        ) AS event_at,
+
+        lm.likes_count,
+        lm.comments_count,
+
+        CASE
+            WHEN lm.likes_count IS NOT NULL
+             AND lm.comments_count IS NOT NULL
+
+                THEN
+                    lm.likes_count
+                    + lm.comments_count
+
+            ELSE NULL
+        END AS engagement
+
+    FROM query_context qc
+
+    JOIN public.sl_query_social_posts qsp
+      ON qsp.tenant_id = qc.tenant_id
+     AND qsp.query_id = qc.query_id
+     AND qsp.is_active = TRUE
+
+    JOIN public.sl_social_posts sp
+      ON sp.tenant_id = qsp.tenant_id
+     AND sp.id = qsp.post_id
+
+    JOIN public.sl_monitored_targets mt
+      ON mt.tenant_id = sp.tenant_id
+     AND mt.id = sp.target_id
+
+    LEFT JOIN LATERAL (
+        SELECT
+            m.likes_count,
+            m.comments_count
+
+        FROM public.sl_post_metrics m
+
+        WHERE m.tenant_id = sp.tenant_id
+          AND m.post_id = sp.id
+
+        ORDER BY
+            m.fetched_at DESC NULLS LAST,
+            m.id DESC
+
+        LIMIT 1
+    ) lm
+      ON TRUE
+
+    WHERE
+        qc.selected_platform = 'all'
+        OR lower(mt.platform) =
+           qc.selected_platform
+),
+
+platform_history AS (
+    SELECT
+        platform,
+
+        FLOOR(
+            EXTRACT(
+                EPOCH FROM (
+                    CURRENT_TIMESTAMP
+                    - MIN(event_at)
+                )
+            ) / 86400
+        )::integer
+            AS history_days,
+
+        COUNT(*) FILTER (
+            WHERE event_at >=
+                CURRENT_TIMESTAMP
+                - max_days * INTERVAL '1 day'
+        )::bigint
+            AS recent_posts
+
+    FROM matched_posts
+
+    GROUP BY
+        platform,
+        max_days
+),
+
+eligible_platforms AS (
+    SELECT
+        platform,
+        history_days
+
+    FROM platform_history
+
+    WHERE recent_posts > 0
+),
+
+window_choice AS (
+    SELECT
+        CASE
+            WHEN COUNT(*) = 0
+                THEN NULL
+
+            WHEN MIN(history_days) < 2
+                THEN NULL
+
+            ELSE LEAST(
+                (
+                    SELECT max_days
+                    FROM query_context
+                    LIMIT 1
+                ),
+
+                GREATEST(
+                    1,
+
+                    FLOOR(
+                        MIN(history_days)::numeric
+                        / 2
+                    )::integer
+                )
+            )
+        END AS comparison_days
+
+    FROM eligible_platforms
+),
+
+current_posts AS (
+    SELECT
+        mp.*,
+        wc.comparison_days
+
+    FROM matched_posts mp
+
+    CROSS JOIN window_choice wc
+
+    JOIN eligible_platforms ep
+      ON ep.platform = mp.platform
+
+    WHERE
+        wc.comparison_days IS NOT NULL
+
+        AND mp.event_at >=
+            CURRENT_TIMESTAMP
+            - wc.comparison_days
+              * INTERVAL '1 day'
+
+        AND mp.event_at <=
+            CURRENT_TIMESTAMP
+),
+
+platform_stats AS (
+    SELECT
+        platform,
+
+        COUNT(*)::bigint
+            AS platform_posts,
+
+        ROUND(
+            AVG(engagement),
+            2
+        ) AS platform_avg_engagement
+
+    FROM current_posts
+
+    WHERE engagement IS NOT NULL
+
+    GROUP BY platform
+),
+
+format_stats AS (
+    SELECT
+        platform,
+        post_type,
+
+        COUNT(*)::bigint
+            AS format_posts,
+
+        ROUND(
+            AVG(engagement),
+            2
+        ) AS format_avg_engagement
+
+    FROM current_posts
+
+    WHERE engagement IS NOT NULL
+
+    GROUP BY
+        platform,
+        post_type
+),
+
+ranked AS (
+    SELECT
+        cp.*,
+
+        ps.platform_posts,
+        ps.platform_avg_engagement,
+
+        fs.format_posts,
+        fs.format_avg_engagement,
+
+        ROW_NUMBER() OVER (
+            PARTITION BY cp.platform
+            ORDER BY
+                cp.engagement DESC NULLS LAST,
+                cp.event_at DESC,
+                cp.post_id
+        ) AS platform_rank
+
+    FROM current_posts cp
+
+    LEFT JOIN platform_stats ps
+      ON ps.platform = cp.platform
+
+    LEFT JOIN format_stats fs
+      ON fs.platform = cp.platform
+     AND fs.post_type = cp.post_type
+
+    WHERE cp.engagement IS NOT NULL
+)
+
+SELECT
+    platform,
+    platform_rank,
+
+    post_id,
+    handle,
+    post_type,
+
+    event_at,
+
+    likes_count,
+    comments_count,
+    engagement,
+
+    platform_posts,
+    platform_avg_engagement,
+
+    CASE
+        WHEN platform_avg_engagement > 0
+            THEN ROUND(
+                (
+                    (
+                        engagement::numeric
+                        - platform_avg_engagement
+                    )
+                    / platform_avg_engagement
+                ) * 100,
+                2
+            )
+        ELSE NULL
+    END AS vs_platform_avg_pct,
+
+    format_posts,
+    format_avg_engagement,
+
+    CASE
+        WHEN format_avg_engagement > 0
+            THEN ROUND(
+                (
+                    (
+                        engagement::numeric
+                        - format_avg_engagement
+                    )
+                    / format_avg_engagement
+                ) * 100,
+                2
+            )
+        ELSE NULL
+    END AS vs_format_avg_pct,
+
+    content_text,
+    post_url,
+
+    comparison_days
+
+FROM ranked
+
+WHERE platform_rank <= 3
+
+ORDER BY
+    platform,
+    platform_rank;
