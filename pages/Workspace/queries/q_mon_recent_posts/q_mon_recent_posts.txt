@@ -1,0 +1,147 @@
+WITH latest_metrics AS (
+    SELECT DISTINCT ON (
+        pm.tenant_id,
+        pm.post_id
+    )
+        pm.tenant_id,
+        pm.post_id,
+        pm.likes_count,
+        pm.comments_count,
+        pm.shares_count,
+        pm.views_count,
+        pm.reposts_count,
+        pm.quotes_count,
+        pm.fetched_at
+    FROM public.sl_post_metrics AS pm
+    ORDER BY
+        pm.tenant_id,
+        pm.post_id,
+        pm.fetched_at DESC
+),
+
+comment_counts AS (
+    SELECT
+        c.tenant_id,
+        c.post_id,
+        COUNT(*)::integer AS comments_scraped
+    FROM public.sl_comments AS c
+    GROUP BY
+        c.tenant_id,
+        c.post_id
+),
+
+alert_counts AS (
+    SELECT
+        c.tenant_id,
+        c.post_id,
+        COUNT(a.id)::integer AS alert_count
+    FROM public.sl_comments AS c
+    INNER JOIN public.sl_alerts AS a
+        ON a.tenant_id = c.tenant_id
+       AND a.comment_id = c.id
+    GROUP BY
+        c.tenant_id,
+        c.post_id
+)
+
+SELECT
+    sp.id,
+    sp.tenant_id,
+
+    mt.platform,
+    mt.handle,
+
+    sp.content_text,
+    sp.published_at,
+    sp.post_url,
+    sp.post_type,
+
+    COALESCE(
+        lm.likes_count,
+        0
+    ) AS likes,
+
+    COALESCE(
+        lm.comments_count,
+        0
+    ) AS comments,
+
+    COALESCE(
+        lm.shares_count,
+        0
+    ) AS shares,
+
+    COALESCE(
+        lm.views_count,
+        0
+    ) AS views,
+
+    COALESCE(
+        lm.reposts_count,
+        0
+    ) AS reposts,
+
+    COALESCE(
+        lm.quotes_count,
+        0
+    ) AS quotes,
+
+    COALESCE(
+        cc.comments_scraped,
+        0
+    ) AS comments_scraped,
+
+    COALESCE(
+        ac.alert_count,
+        0
+    ) AS alert_count,
+
+    lm.fetched_at AS metrics_fetched_at
+
+FROM public.sl_query_social_posts AS qsp
+
+INNER JOIN public.sl_social_posts AS sp
+    ON sp.tenant_id = qsp.tenant_id
+   AND sp.id = qsp.post_id
+
+INNER JOIN public.sl_monitored_targets AS mt
+    ON mt.tenant_id = sp.tenant_id
+   AND mt.id = sp.target_id
+
+LEFT JOIN latest_metrics AS lm
+    ON lm.tenant_id = sp.tenant_id
+   AND lm.post_id = sp.id
+
+LEFT JOIN comment_counts AS cc
+    ON cc.tenant_id = sp.tenant_id
+   AND cc.post_id = sp.id
+
+LEFT JOIN alert_counts AS ac
+    ON ac.tenant_id = sp.tenant_id
+   AND ac.post_id = sp.id
+
+WHERE qsp.query_id =
+    {{ CW_Monitoreo.model.queryId }}::uuid
+
+AND sp.published_at >=
+    CURRENT_TIMESTAMP -
+    CASE
+        {{ CW_Monitoreo.model.filters.range || '30d' }}
+        WHEN '7d'  THEN INTERVAL '7 days'
+        WHEN '15d' THEN INTERVAL '15 days'
+        WHEN '30d' THEN INTERVAL '30 days'
+        WHEN '90d' THEN INTERVAL '90 days'
+        ELSE INTERVAL '30 days'
+    END
+
+AND (
+    {{ CW_Monitoreo.model.filters.platform || 'all' }} = 'all'
+    OR mt.platform =
+       {{ CW_Monitoreo.model.filters.platform || 'all' }}
+)
+
+ORDER BY
+    sp.published_at DESC,
+    sp.id DESC
+
+LIMIT 50;

@@ -1,0 +1,107 @@
+WITH filtered_alerts AS (
+    SELECT
+        a.id AS alert_id,
+        a.tenant_id,
+        a.comment_id,
+        a.alert_type,
+        a.created_at AS alert_created_at,
+        a.read_at,
+
+        c.content_text,
+        c.author_id,
+        c.author_name,
+        c.author_gender,
+        c.author_url,
+        c.published_at AS comment_published_at,
+        c.scraped_at AS comment_scraped_at,
+        c.author_username,
+        c.author_avatar_url,
+        c.author_is_verified,
+        c.likes_count,
+        c.child_comments_count,
+
+        sp.id AS post_id,
+        sp.content_text AS post_content_text,
+        sp.published_at AS post_published_at,
+        sp.post_url,
+        sp.post_type,
+
+        mt.platform,
+        mt.handle
+
+    FROM public.sl_alerts AS a
+
+    INNER JOIN public.sl_comments AS c
+        ON c.tenant_id = a.tenant_id
+       AND c.id = a.comment_id
+
+    INNER JOIN public.sl_social_posts AS sp
+        ON sp.tenant_id = c.tenant_id
+       AND sp.id = c.post_id
+
+    INNER JOIN public.sl_monitored_targets AS mt
+        ON mt.tenant_id = sp.tenant_id
+       AND mt.id = sp.target_id
+
+    WHERE EXISTS (
+        SELECT 1
+        FROM public.sl_query_social_posts AS qsp
+        WHERE qsp.tenant_id = sp.tenant_id
+          AND qsp.post_id = sp.id
+          AND qsp.query_id =
+              {{ CW_Monitoreo.model.queryId }}::uuid
+    )
+
+    AND a.created_at >=
+        CURRENT_TIMESTAMP -
+        CASE {{ CW_Monitoreo.model.filters.range || '30d' }}
+            WHEN '7d'  THEN INTERVAL '7 days'
+            WHEN '15d' THEN INTERVAL '15 days'
+            WHEN '30d' THEN INTERVAL '30 days'
+            WHEN '90d' THEN INTERVAL '90 days'
+            ELSE INTERVAL '30 days'
+        END
+
+    AND (
+        {{ CW_Monitoreo.model.filters.platform || 'all' }} = 'all'
+        OR mt.platform =
+           {{ CW_Monitoreo.model.filters.platform || 'all' }}
+    )
+)
+
+SELECT
+    alert_id,
+    tenant_id,
+    comment_id,
+    alert_type,
+    alert_created_at,
+    read_at,
+
+    content_text,
+    author_id,
+    author_name,
+    author_gender,
+    author_url,
+    comment_published_at,
+    comment_scraped_at,
+    author_username,
+    author_avatar_url,
+    author_is_verified,
+    likes_count,
+    child_comments_count,
+
+    post_id,
+    post_content_text,
+    post_published_at,
+    post_url,
+    post_type,
+
+    platform,
+    handle
+
+FROM filtered_alerts
+
+ORDER BY
+    alert_created_at DESC
+
+LIMIT 100;
