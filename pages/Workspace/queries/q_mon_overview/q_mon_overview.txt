@@ -1,0 +1,93 @@
+WITH latest_metrics AS (
+    SELECT DISTINCT ON (pm.post_id)
+        pm.post_id,
+        pm.tenant_id,
+        COALESCE(pm.likes_count, 0)    AS likes_count,
+        COALESCE(pm.comments_count, 0) AS comments_count,
+        COALESCE(pm.shares_count, 0)   AS shares_count,
+        COALESCE(pm.views_count, 0)    AS views_count,
+        COALESCE(pm.reposts_count, 0)  AS reposts_count,
+        COALESCE(pm.quotes_count, 0)   AS quotes_count,
+        pm.fetched_at
+    FROM public.sl_post_metrics pm
+    WHERE pm.tenant_id =
+        'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid
+    ORDER BY
+        pm.post_id,
+        pm.fetched_at DESC
+),
+
+comments_by_post AS (
+    SELECT
+        c.post_id,
+        c.tenant_id,
+        COUNT(*) AS comments_scraped,
+        COALESCE(SUM(c.likes_count), 0) AS comment_likes
+    FROM public.sl_comments c
+    WHERE c.tenant_id =
+        'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid
+    GROUP BY
+        c.post_id,
+        c.tenant_id
+),
+
+alerts_by_post AS (
+    SELECT
+        c.post_id,
+        c.tenant_id,
+        COUNT(a.id) AS alerts
+    FROM public.sl_comments c
+    JOIN public.sl_alerts a
+      ON a.comment_id = c.id
+     AND a.tenant_id = c.tenant_id
+    WHERE c.tenant_id =
+        'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid
+    GROUP BY
+        c.post_id,
+        c.tenant_id
+)
+
+SELECT
+    t.platform,
+
+    COUNT(sp.id) AS posts,
+
+    COUNT(lm.post_id) AS posts_with_metrics,
+
+    COALESCE(SUM(lm.likes_count), 0) AS likes,
+    COALESCE(SUM(lm.comments_count), 0) AS comments_reported,
+    COALESCE(SUM(lm.shares_count), 0) AS shares,
+    COALESCE(SUM(lm.views_count), 0) AS views,
+    COALESCE(SUM(lm.reposts_count), 0) AS reposts,
+    COALESCE(SUM(lm.quotes_count), 0) AS quotes,
+
+    COALESCE(SUM(cb.comments_scraped), 0) AS comments_scraped,
+    COALESCE(SUM(cb.comment_likes), 0) AS comment_likes,
+    COALESCE(SUM(ab.alerts), 0) AS alerts,
+
+    MIN(sp.published_at) AS first_post_at,
+    MAX(sp.published_at) AS last_post_at
+
+FROM public.sl_social_posts sp
+
+JOIN public.sl_monitored_targets t
+  ON t.id = sp.target_id
+ AND t.tenant_id = sp.tenant_id
+
+LEFT JOIN latest_metrics lm
+  ON lm.post_id = sp.id
+ AND lm.tenant_id = sp.tenant_id
+
+LEFT JOIN comments_by_post cb
+  ON cb.post_id = sp.id
+ AND cb.tenant_id = sp.tenant_id
+
+LEFT JOIN alerts_by_post ab
+  ON ab.post_id = sp.id
+ AND ab.tenant_id = sp.tenant_id
+
+WHERE sp.tenant_id =
+    'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid
+
+GROUP BY t.platform
+ORDER BY posts DESC;

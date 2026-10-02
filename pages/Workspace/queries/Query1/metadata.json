@@ -5,7 +5,7 @@
   "pluginType": "DB",
   "unpublishedAction": {
     "actionConfiguration": {
-      "body": "SELECT\n    COUNT(*) AS grupos_duplicados,\n    COALESCE(SUM(cantidad - 1), 0) AS filas_duplicadas\nFROM (\n    SELECT\n        tenant_id,\n        actor_id,\n        external_post_id,\n        COUNT(*) AS cantidad\n    FROM public.sl_actor_posts\n    WHERE tenant_id = 'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid\n    GROUP BY tenant_id, actor_id, external_post_id\n    HAVING COUNT(*) > 1\n) d;",
+      "body": "SELECT\n    t.id,\n    t.tenant_id,\n    t.platform,\n    t.external_profile_id,\n    t.handle,\n    t.status,\n    t.is_competitor,\n    COUNT(sp.id) AS posts\nFROM public.sl_monitored_targets t\nLEFT JOIN public.sl_social_posts sp\n  ON sp.target_id = t.id\n AND sp.tenant_id = t.tenant_id\nWHERE t.tenant_id = 'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid\nGROUP BY\n    t.id,\n    t.tenant_id,\n    t.platform,\n    t.external_profile_id,\n    t.handle,\n    t.status,\n    t.is_competitor\nORDER BY\n    posts DESC,\n    t.platform,\n    t.handle;",
       "encodeParamsToggle": true,
       "paginationType": "NONE",
       "pluginSpecifiedTemplates": [

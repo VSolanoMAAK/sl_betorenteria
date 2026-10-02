@@ -1,0 +1,42 @@
+WITH latest_metrics AS (
+    SELECT DISTINCT ON (pm.post_id)
+        pm.post_id,
+        pm.tenant_id,
+        COALESCE(pm.likes_count, 0) AS likes_count,
+        COALESCE(pm.comments_count, 0) AS comments_count,
+        COALESCE(pm.shares_count, 0) AS shares_count,
+        COALESCE(pm.views_count, 0) AS views_count,
+        COALESCE(pm.reposts_count, 0) AS reposts_count,
+        COALESCE(pm.quotes_count, 0) AS quotes_count
+    FROM public.sl_post_metrics pm
+    WHERE pm.tenant_id =
+        'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid
+    ORDER BY pm.post_id, pm.fetched_at DESC
+)
+
+SELECT
+    DATE(sp.published_at) AS day,
+    t.platform,
+    COUNT(*) AS posts,
+    COALESCE(SUM(lm.likes_count), 0) AS likes,
+    COALESCE(SUM(lm.comments_count), 0) AS comments,
+    COALESCE(SUM(lm.shares_count), 0) AS shares,
+    COALESCE(SUM(lm.views_count), 0) AS views,
+    COALESCE(SUM(lm.reposts_count), 0) AS reposts,
+    COALESCE(SUM(lm.quotes_count), 0) AS quotes
+FROM public.sl_social_posts sp
+JOIN public.sl_monitored_targets t
+  ON t.id = sp.target_id
+ AND t.tenant_id = sp.tenant_id
+LEFT JOIN latest_metrics lm
+  ON lm.post_id = sp.id
+ AND lm.tenant_id = sp.tenant_id
+WHERE sp.tenant_id =
+    'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid
+  AND sp.published_at >= CURRENT_DATE - INTERVAL '30 days'
+GROUP BY
+    DATE(sp.published_at),
+    t.platform
+ORDER BY
+    day,
+    t.platform;

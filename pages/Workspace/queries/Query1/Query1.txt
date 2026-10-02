@@ -1,14 +1,26 @@
 SELECT
-    COUNT(*) AS grupos_duplicados,
-    COALESCE(SUM(cantidad - 1), 0) AS filas_duplicadas
-FROM (
-    SELECT
-        tenant_id,
-        actor_id,
-        external_post_id,
-        COUNT(*) AS cantidad
-    FROM public.sl_actor_posts
-    WHERE tenant_id = 'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid
-    GROUP BY tenant_id, actor_id, external_post_id
-    HAVING COUNT(*) > 1
-) d;
+    t.id,
+    t.tenant_id,
+    t.platform,
+    t.external_profile_id,
+    t.handle,
+    t.status,
+    t.is_competitor,
+    COUNT(sp.id) AS posts
+FROM public.sl_monitored_targets t
+LEFT JOIN public.sl_social_posts sp
+  ON sp.target_id = t.id
+ AND sp.tenant_id = t.tenant_id
+WHERE t.tenant_id = 'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid
+GROUP BY
+    t.id,
+    t.tenant_id,
+    t.platform,
+    t.external_profile_id,
+    t.handle,
+    t.status,
+    t.is_competitor
+ORDER BY
+    posts DESC,
+    t.platform,
+    t.handle;
