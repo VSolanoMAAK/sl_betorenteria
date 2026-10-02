@@ -31,6 +31,9 @@
     },
     {
       "key": "onRefresh"
+    },
+    {
+      "key": "onOpenPost"
     }
   ],
   "dynamicTriggerPathList": [
@@ -39,11 +42,15 @@
     },
     {
       "key": "onRefresh"
+    },
+    {
+      "key": "onOpenPost"
     }
   ],
   "events": [
     "onResetClick",
-    "onRefresh"
+    "onRefresh",
+    "onOpenPost"
   ],
   "isCanvas": false,
   "isLoading": false,
@@ -58,6 +65,7 @@
   "mobileRightColumn": 23,
   "mobileTopRow": 278,
   "needsErrorInfo": false,
+  "onOpenPost": "{{ navigateTo(url, {}, \"NEW_WINDOW\") }}",
   "onRefresh": "{{ JS_Analisis.loadData() }}",
   "onResetClick": "{{showAlert('Successfully reset!!', '');}}",
   "originalBottomRow": 363,
