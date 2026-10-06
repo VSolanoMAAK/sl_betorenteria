@@ -1,45 +1,23 @@
 {{
-  (() => {
-    const parts =
-      new Intl.DateTimeFormat(
-        'en-US',
-        {
-          timeZone: 'America/Mexico_City',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit'
-        }
-      ).formatToParts(new Date());
+  ({
+    queryId:
+      this.params.queryId ||
+      "",
 
-    const values = {};
+    userEmail:
+      this.params.userEmail ||
+      "",
 
-    parts.forEach(function (part) {
-      values[part.type] = part.value;
-    });
+    dateFrom:
+      this.params.dateFrom ||
+      "",
 
-    const today =
-      values.year + '-' +
-      values.month + '-' +
-      values.day;
+    dateTo:
+      this.params.dateTo ||
+      "",
 
-    return {
-      queryId:
-        appsmith.store.selectedQueryId ||
-        appsmith.store.activeQueryId ||
-        "",
-
-      userEmail:
-        appsmith.store.userEmail ||
-        "",
-
-      dateFrom:
-        today,
-
-      dateTo:
-        today,
-
-      originFilter:
-        ""
-    };
-  })()
+    originFilter:
+      this.params.originFilter ||
+      ""
+  })
 }}

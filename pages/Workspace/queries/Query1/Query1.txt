@@ -1,6 +1,13 @@
 SELECT
-    email
-FROM public.sl_users
-WHERE tenant_id = 'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid
-  AND is_active = true
-ORDER BY email;
+    qsp.query_id,
+    COUNT(*) AS total_links,
+    COUNT(*) FILTER (
+        WHERE qsp.is_active = TRUE
+    ) AS active_links,
+    MIN(qsp.matched_at) AS first_matched_at,
+    MAX(qsp.matched_at) AS last_matched_at
+FROM public.sl_query_social_posts qsp
+WHERE qsp.query_id =
+      '34c80595-e722-423a-9802-f6327943b659'::uuid
+GROUP BY
+    qsp.query_id;

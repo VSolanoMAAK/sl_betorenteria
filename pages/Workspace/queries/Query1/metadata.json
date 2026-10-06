@@ -5,7 +5,7 @@
   "pluginType": "DB",
   "unpublishedAction": {
     "actionConfiguration": {
-      "body": "SELECT\n    email\nFROM public.sl_users\nWHERE tenant_id = 'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid\n  AND is_active = true\nORDER BY email;",
+      "body": "SELECT\n    qsp.query_id,\n    COUNT(*) AS total_links,\n    COUNT(*) FILTER (\n        WHERE qsp.is_active = TRUE\n    ) AS active_links,\n    MIN(qsp.matched_at) AS first_matched_at,\n    MAX(qsp.matched_at) AS last_matched_at\nFROM public.sl_query_social_posts qsp\nWHERE qsp.query_id =\n      '34c80595-e722-423a-9802-f6327943b659'::uuid\nGROUP BY\n    qsp.query_id;",
       "encodeParamsToggle": true,
       "paginationType": "NONE",
       "pluginSpecifiedTemplates": [

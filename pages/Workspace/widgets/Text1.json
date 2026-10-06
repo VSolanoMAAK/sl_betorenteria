@@ -1,0 +1,55 @@
+{
+  "animateLoading": true,
+  "borderRadius": "{{appsmith.theme.borderRadius.appBorderRadius}}",
+  "bottomRow": 370,
+  "dynamicBindingPathList": [
+    {
+      "key": "truncateButtonColor"
+    },
+    {
+      "key": "fontFamily"
+    },
+    {
+      "key": "borderRadius"
+    },
+    {
+      "key": "text"
+    }
+  ],
+  "dynamicHeight": "AUTO_HEIGHT",
+  "dynamicTriggerPathList": [],
+  "fontFamily": "{{appsmith.theme.fontFamily.appFont}}",
+  "fontSize": "1rem",
+  "fontStyle": "BOLD",
+  "isLoading": false,
+  "isVisible": true,
+  "key": "7dol52uqf4",
+  "leftColumn": 0,
+  "maxDynamicHeight": 9000,
+  "minDynamicHeight": 4,
+  "minWidth": 450,
+  "mobileBottomRow": 367,
+  "mobileLeftColumn": 0,
+  "mobileRightColumn": 16,
+  "mobileTopRow": 363,
+  "needsErrorInfo": false,
+  "originalBottomRow": 370,
+  "originalTopRow": 363,
+  "overflow": "NONE",
+  "parentColumnSpace": 22.125,
+  "parentId": "0",
+  "parentRowSpace": 10,
+  "renderMode": "CANVAS",
+  "responsiveBehavior": "fill",
+  "rightColumn": 16,
+  "shouldTruncate": false,
+  "text": "{{\n  (() => {\n    const value =\n      CW_Constructor.model.drawerPosts;\n\n    let directRows = -1;\n    let decodedRows = -1;\n\n    if (typeof value === \"string\") {\n      try {\n        directRows =\n          JSON.parse(value).length;\n      } catch (e) {}\n\n      try {\n        decodedRows =\n          JSON.parse(\n            decodeURIComponent(value)\n          ).length;\n      } catch (e) {}\n    }\n\n    return JSON.stringify({\n      queryRows:\n        (Q_DrawerPosts.data || []).length,\n\n      modelType:\n        Array.isArray(value)\n          ? \"array\"\n          : typeof value,\n\n      modelLength:\n        typeof value === \"string\"\n          ? value.length\n          : -1,\n\n      directRows,\n      decodedRows\n    });\n  })()\n}}",
+  "textAlign": "LEFT",
+  "textColor": "#231F20",
+  "topRow": 363,
+  "truncateButtonColor": "{{appsmith.theme.colors.primaryColor}}",
+  "type": "TEXT_WIDGET",
+  "version": 1,
+  "widgetId": "x760eeh7ag",
+  "widgetName": "Text1"
+}

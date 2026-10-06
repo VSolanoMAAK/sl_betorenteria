@@ -92,7 +92,55 @@ export default {
 
 
   saveQuery: async function () {
+
+    /*
+     * Capturar el contexto WEB ANTES de ejecutar
+     * cualquier Query que pueda provocar una
+     * reevaluación reactiva del Custom Widget.
+     */
+    const constructorModel =
+      CW_Constructor &&
+      CW_Constructor.model
+        ? CW_Constructor.model
+        : {};
+
+
+    const webDateFrom =
+      String(
+        constructorModel.query_date_from ||
+        ''
+      ).trim();
+
+
+    const webDateTo =
+      String(
+        constructorModel.query_date_to ||
+        ''
+      ).trim();
+
+
+    const webPeriod =
+      String(
+        constructorModel.query_period ||
+        ''
+      ).trim();
+
+
+    const webUserEmail =
+      String(
+        appsmith.store.userEmail ||
+        ''
+      )
+        .trim()
+        .toLowerCase();
+
+
+    const webOriginFilter =
+      '';
+
+
     let result;
+
 
     try {
 
@@ -158,10 +206,12 @@ export default {
         row.query_id || ''
       ).trim();
 
+
     const queryName =
       String(
         row.name || ''
       ).trim();
+
 
     const queryStatus =
       String(
@@ -169,6 +219,7 @@ export default {
       )
         .trim()
         .toLowerCase();
+
 
     const useWeb =
       row.use_web === true ||
@@ -236,8 +287,9 @@ export default {
      * q_ws_list_queries sea realmente una
      * Query/API ejecutable.
      *
-     * NO convertir un problema de refresco
-     * en un supuesto fallo de creación.
+     * El rango WEB ya fue capturado antes
+     * de este refresco y no depende del
+     * estado reactivo posterior.
      */
     try {
 
@@ -266,13 +318,15 @@ export default {
      * - sl_web_keywords
      * - sl_query_web_keywords
      *
-     * por lo que q_ws_web_search_v2 puede
-     * trabajar con queryId.
+     * q_ws_web_search_v2 recibe el contexto
+     * explícitamente mediante parámetros
+     * runtime.
      */
     if (
       useWeb &&
       queryStatus === 'active'
     ) {
+
       try {
 
         if (
@@ -285,7 +339,50 @@ export default {
         }
 
 
-        await q_ws_web_search_v2.run();
+        if (
+          !/^\d{4}-\d{2}-\d{2}$/.test(
+            webDateFrom
+          ) ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(
+            webDateTo
+          ) ||
+          webDateFrom > webDateTo
+        ) {
+          throw new Error(
+            'El rango WEB no está disponible o no es válido. ' +
+            'Periodo: ' +
+            (
+              webPeriod ||
+              'sin identificar'
+            ) +
+            '.'
+          );
+        }
+
+
+        if (!webUserEmail) {
+          throw new Error(
+            'El usuario no fue identificado para ejecutar la búsqueda WEB.'
+          );
+        }
+
+
+        await q_ws_web_search_v2.run({
+          queryId:
+            queryId,
+
+          userEmail:
+            webUserEmail,
+
+          dateFrom:
+            webDateFrom,
+
+          dateTo:
+            webDateTo,
+
+          originFilter:
+            webOriginFilter
+        });
 
 
         /*
