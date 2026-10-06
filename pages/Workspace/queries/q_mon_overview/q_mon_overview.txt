@@ -89,5 +89,19 @@ LEFT JOIN alerts_by_post ab
 WHERE sp.tenant_id =
     'e494efe2-07f5-4197-ac77-5f2f0bc59a92'::uuid
 
+  AND sp.published_at >=
+      CURRENT_TIMESTAMP -
+      CASE
+          WHEN {{ appsmith.store.CW_Monitoreo_filters?.range || "30d" }} = '7d'
+              THEN INTERVAL '7 days'
+
+          WHEN {{ appsmith.store.CW_Monitoreo_filters?.range || "30d" }} = '15d'
+              THEN INTERVAL '15 days'
+
+          ELSE INTERVAL '30 days'
+      END
+
+  AND sp.published_at <= CURRENT_TIMESTAMP
+
 GROUP BY t.platform
 ORDER BY posts DESC;

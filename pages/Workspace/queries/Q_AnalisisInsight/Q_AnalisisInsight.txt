@@ -1,0 +1,6 @@
+{
+  "query_id": {{ CW_Analisis.model.selectedQueryId }},
+  "user_email": {{ appsmith.store.userEmail }},
+  "period_days": {{ CW_Analisis.model.periodDays }},
+  "platform": {{ CW_Analisis.model.platform }}
+}
